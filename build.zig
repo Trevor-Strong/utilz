@@ -14,17 +14,20 @@ pub fn build(b: *Build) void {
 
     const root_source_file = b.path("src/util.zig");
 
-    const module = b.addModule("util", .{
+    const utilz = b.addModule("utilz", .{
         .target = target,
         .optimize = optimize,
         .root_source_file = root_source_file,
         .pic = pic,
     });
-    _ = module;
+    utilz.addImport("utilz", utilz);
 
     // Formatting
 
-    const fmt = b.addFmt(.{ .paths = &.{ "src", "build.zig", "build.zig.zon" }, .check = check_fmt });
+    const fmt = b.addFmt(.{
+        .paths = &.{ "src", "build.zig", "build.zig.zon" },
+        .check = check_fmt,
+    });
 
     const fmt_step = b.step("fmt", "'zig fmt' the source files");
     fmt_step.dependOn(&fmt.step);

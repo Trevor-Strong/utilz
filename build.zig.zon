@@ -1,0 +1,12 @@
+.{
+    .name = "util",
+    .version = "0.1.0",
+    .min_zig_version = "0.13.0",
+    .dependencies = .{},
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+    },
+}

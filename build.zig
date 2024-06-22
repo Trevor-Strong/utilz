@@ -40,6 +40,7 @@ pub fn build(b: *Build) void {
         .optimize = optimize,
         .pic = pic,
     });
+    unit_tests.root_module.addImport("utilz", &unit_tests.root_module);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

@@ -1,20 +1,38 @@
 //! Utilities relating to slices
 
-pub const ConversionError = error{ NotSliceConvertible };
+pub const ops = @import("slice/ops.zig");
 
+pub const toSlice = ops.toSlice;
+pub const breakAt = ops.breakAt;
+pub const splitAt = ops.splitAt;
+pub const Break = ops.Break;
+pub const window = ops.window;
+pub const WindowIterator = ops.WindowIterator;
+
+
+/// Slice type information.
 pub const Slice = struct {
+    /// Static length of the original type this `Slice` was constructed from or
+    /// `null` if the original type did not have a statically known length
     len: ?usize,
+    /// Information on how to convert the original type to a slice.
     conv: Conversion,
+    /// The element type of the slice
     child: type,
+    /// The sentinel of the slice
     sentinel: ?*const anyopaque,
+    /// The alignment of the slice pointer
     alignment: u29,
+    /// Address space of the slice pointer
     addr_space: AddressSpace,
     is_const: bool,
     is_volatile: bool,
     is_allowzero: bool,
 
-    pub fn fromPtrInfo(comptime ptr_info: PtrInfo) ConversionError!Slice {
-        var slice = Slice {
+    pub const Error = error{NotSliceConvertible};
+
+    pub fn fromPtrInfo(comptime ptr_info: PtrInfo) Error!Slice {
+        var slice = Slice{
             .alignment = ptr_info.alignment,
             .addr_space = ptr_info.address_space,
             .is_const = ptr_info.is_const,
@@ -48,9 +66,9 @@ pub const Slice = struct {
                     slice.len = vec_info.len;
                     slice.child = vec_info.child;
                     slice.sentinel = null;
-                    slice.conv = .{ .array = true };
+                    slice.conv = .{ .vec_to_arr = true };
                 },
-                else => return error.NotSliceConvertible
+                else => return error.NotSliceConvertible,
             },
             .Many => if (ptr_info.sentinel) |sentinel| {
                 slice.len = null;
@@ -68,18 +86,21 @@ pub const Slice = struct {
                 .Vector => |vec_info| {
                     slice.len = vec_info.len;
                     slice.child = vec_info.child;
-                    slice.conv = .{ .is_c = true, .array = true };
+                    slice.conv = .{ .is_c = true, .vec_to_arr = true };
                 },
-            }
+            },
         }
+        return slice;
     }
 
+    /// Gets the sentinel value of this `Slice` object.
     pub fn getSentinel(comptime slice: Slice) ?slice.child {
         const Dest = ?*const slice.child;
         const ptr: Dest = @ptrCast(@alignCast(slice.sentinel));
         return if (ptr) |p| p.* else null;
     }
 
+    /// Typed setter for the sentinel value of this `Slice` object.
     pub fn setSentinel(comptime slice: *Slice, comptime new_sentinel: ?slice.child) void {
         const s = new_sentinel orelse {
             slice.sentinel = null;
@@ -88,25 +109,48 @@ pub const Slice = struct {
         slice.sentinel = &s;
     }
 
-    pub fn dropSentinel(comptime slice: *Slice) ConversionError!void {
+    pub fn canConvert(comptime slice: Slice, comptime opts: struct { fast: bool = false }) bool {
         if (slice.conv.slice_to) {
-            assert(slice.sentinel != null);
-            return error.NotSliceConvertible;
+            return !opts.fast and (slice.sentinel != null or slice.conv.is_c);
         }
+
+        return true;
+    }
+
+    pub fn requiresSentinel(comptime slice: Slice) bool {
+        return slice.conv.slice_to and !slice.conv.is_c;
+    }
+
+    pub fn dropSentinel(comptime slice: *Slice) void {
         slice.sentinel = null;
     }
 
-    pub fn convert(comptime slice: Slice, from: slice.Original()) slice.Type() {
-        if (slice.conv.isDirect()) return from;
-
-        if (slice.conv.slice_to) return mem.span(from);
-
-        const ArrayPtr = slice.arrayPtrType().?;
-        return @as(ArrayPtr, from);
+    pub fn withoutSentinel(comptime slice: Slice) Slice {
+        var tmp = slice;
+        tmp.dropSentinel();
+        return tmp;
     }
 
-    pub fn arrayPtrType(comptime slice: Slice) ?type {
-        const len = slice.len orelse return null;
+    pub fn convert(comptime slice: Slice, from: slice.Original()) slice.Type() {
+        if (comptime slice.conv.isDirect()) {
+            return from;
+        } else if (comptime slice.conv.slice_to) {
+            if (slice.sentinel == null and !slice.conv.is_c)
+                @compileError("Unable to determine the length of type '" ++
+                    @typeName(@TypeOf(from)) ++ "'");
+
+            const sentinel: slice.child = comptime slice.getSentinel() orelse 0;
+            return mem.sliceTo(from, sentinel);
+        } else {
+            return @as(slice.ArrayPtr(), from);
+        }
+    }
+
+    /// Constructs the array pointer type represented by this `Slice` object.
+    ///
+    /// Raises a compile error when `slice.len` is `null`
+    pub fn ArrayPtr(comptime slice: Slice) type {
+        const len = slice.len orelse @compileError("Length not statically known");
         return @Type(.{
             .Pointer = .{
                 .size = .One,
@@ -121,8 +165,24 @@ pub const Slice = struct {
         });
     }
 
+    /// Constructs the slice type represented by this `Slice` object
     pub fn Type(comptime slice: Slice) type {
-        return @Type(slice.resultInfo());
+        return @Type(slice.typeInfo());
+    }
+
+    pub fn typeInfo(comptime slice: Slice) std.builtin.Type {
+        return .{
+            .Pointer = .{
+                .child = slice.child,
+                .size = .Slice,
+                .alignment = slice.alignment,
+                .address_space = slice.addr_space,
+                .sentinel = slice.sentinel,
+                .is_const = slice.is_const,
+                .is_volatile = slice.is_volatile,
+                .is_allowzero = slice.is_allowzero,
+            },
+        };
     }
 
     pub fn Original(comptime slice: Slice) type {
@@ -155,7 +215,7 @@ pub const Slice = struct {
             } else {
                 ptr_info.size = .Slice;
                 ptr_info.child = slice.child;
-                ptr_info.sentinel = null;
+                ptr_info.sentinel = slice.sentinel;
             }
         } else if (slice.conv.vec_to_arr) {
             ptr_info.child = @Type(.{
@@ -193,6 +253,46 @@ pub const Slice = struct {
         return .{ .Pointer = ptr_info };
     }
 
+    /// Identifies the "shape" of the type used to construct this `Slice`.
+    pub fn originalKind(comptime slice: Slice) OriginalTypeKind {
+        if (slice.conv.isDirect()) {
+            return if (slice.len == null) .slice else .array_ptr;
+        }
+        if (slice.conv.is_c) {
+            return if (slice.conv.slice_to)
+                .c_ptr
+            else if (slice.conv.vec_to_arr)
+                .vector_c_ptr
+            else
+                .array_c_ptr;
+        } else if (slice.conv.vec_to_arr) {
+            return .vector_ptr;
+        } else { // slice.conv.slice_to
+            return .sentineled_many_ptr;
+        }
+    }
+
+    /// The different kinds of pointer types that are recognized as being slice
+    /// like.
+    pub const OriginalTypeKind = enum {
+        /// Already a slice
+        slice,
+        /// Pointer to an array
+        array_ptr,
+        /// Pointer to a vector. The elements of the vector must have a power of
+        /// 2 bit-size.
+        vector_ptr,
+        /// Many item pointer with a sentinel
+        sentineled_many_ptr,
+        /// A c-pointer.
+        c_ptr,
+        /// A c-pointer to an array
+        array_c_ptr,
+        /// A c-pointer to a vector. The elements of the vector must have a
+        /// power of 2 bit-size.
+        vector_c_ptr,
+    };
+
     /// How one would convert a value of the original type to a slice
     pub const Conversion = packed struct {
         /// Original type needs to be cast to an array type.
@@ -205,33 +305,171 @@ pub const Slice = struct {
         /// Original type is many item pointer with a sentinel or a `C` pointer.
         slice_to: bool = false,
 
+        /// Returns `true` if no additional casting is needed to convert the
+        /// original type to a slice
         pub fn isDirect(conv: Conversion) bool {
-            return utilz.pack.toInt(conv) == 0;
+            return !conv.vec_to_arr and !conv.is_c and !conv.slice_to;
         }
-
     };
 };
 
+/// Returns `true` if `@as(AsSlice(T), value)` would compile for `value: T`;
+/// otherwise, returns `false`.
+///
+/// See also: `AsSlice`
 pub fn isCoercible(comptime T: type) bool {
-    return if (getInfo(T)) |slice| slice.conv == .direct else false;
+    return if (forType(T)) |slice| slice.conv.isDirect() else |_| false;
 }
 
-pub fn getInfo(comptime T: type) ?Slice {
-    switch (@typeInfo(T)) {
-        .Pointer => |ptr_info| if (Slice.fromPtrInfo(ptr_info)) |slice|
-            return slice
-        else |_| {},
-        else => {},
-    }
-    return null;
+/// Gets type information about `T` as a slice type. If `T` cannot be viewed as
+/// a slice type, `null` is returned.
+///
+/// See also: `Slice`, `Slice.fromPtrInfo`, `isCoercible`
+pub fn forType(comptime T: type) Slice.Error!Slice {
+    return switch (@typeInfo(T)) {
+        .Pointer => |ptr_info| return Slice.fromPtrInfo(ptr_info),
+        else => error.NotSliceConvertible,
+    };
 }
 
 /// Gets the element type of a slice-like type.
+///
+/// NOTE: This function uses the loosest definition of "slice type" when
+/// retrieving the element type. Use other functions to restrict `T` if a
+/// stricter definition of slice type is needed
 pub fn Elem(comptime T: type) type {
-    if (getInfo(T)) |slice| {
-        if (slice.conv.isDirect()) return slice.child;
-    }
-    @compileError(utilz.unexpectedTypeMsg("Expected slice-like type,", T));
+    const slice = forType(T) catch {
+        @compileError(utilz.expectedTypeMsg("slice-like type, ", T));
+    };
+
+    return slice.child;
+}
+
+/// Coerces `T` to a slice type.
+///
+/// `T` must be coercible to a slice type via `@as`
+/// (i.e. `forType(T) != null and forType(T).conv.isDirect()` is `true).
+pub fn AsSlice(comptime T: type) type {
+    if (forType(T)) |info| {
+        if (info.conv.isDirect()) {
+            return info.Type();
+        }
+    } else |_| {}
+    @compileError(utilz.expected("slice-like type, ").foundType(T));
+}
+
+/// Coerces `T` to a slice type, removing any sentinel present in `T`
+///
+/// `T` must be coercible to a slice type via `@as`
+/// (i.e. `forType(T) != null and forType(T).conv.isDirect()` is `true).
+///
+/// See also: `AsSlice`, `AsSliceWithSentinel`, `AsSliceOfNoSentinel`
+pub fn AsSliceNoSentinel(comptime T: type) type {
+    if (forType(T)) |slice| {
+        if (slice.conv.isDirect()) {
+            return slice.withoutSentinel().Type();
+        }
+    } else |_| {}
+    @compileError(utilz.expected("slice-like type, ").foundType(T));
+}
+
+/// Coerces `T` to a slice type with the given sentinel value, overriding the
+/// sentinel of `T`
+///
+/// `T` must be coercible to a slice type via `@as`
+/// (i.e. `forType(T) != null and forType(T).conv.isDirect()` is `true).
+///
+/// See also: `AsSlice`, `AsSliceNoSentinel`, `AsSliceOfWithSentinel`
+pub fn AsSliceWithSentinel(comptime T: type, comptime sentinel: Elem(T)) type {
+    var slice = forType(T) catch {
+        @compileError(utilz.expected("slice-like type, ").foundType(T));
+    };
+
+    if (!slice.conv.isDirect())
+        @compileError(utilz.expected("slice-like type, ").foundType(T));
+
+    slice.sentinel = &sentinel;
+
+    return slice.Type();
+}
+
+/// Behaves exactly like `AsSlice`, except that the child type of the slice is
+/// required to be `E`.
+///
+/// See also: `AsSlice`, `AsSliceOfNoSentinel`, `AsSliceOfWithSentinel`
+pub fn AsSliceOf(comptime T: type, comptime E: type) type {
+    if (forType(T)) |slice| {
+        if (slice.conv.isDirect() and slice.child == E)
+            return slice.Type();
+    } else |_| {}
+    @compileError(utilz.expected("slice-like type").ofType(E).foundType(T));
+}
+
+/// Behaves exactly like `AsSliceNoSentinel`, except that the child type of the
+/// slice is required to be `E`.
+///
+/// See also: `AsSliceOfNoSentinel`, `AsSlice`, `AsSliceOfWithSentinel`
+pub fn AsSliceOfNoSentinel(comptime T: type, comptime E: type) type {
+    if (forType(T)) |slice| {
+        if (slice.conv.isDirect() and slice.child == E) {
+            return slice.withoutSentinel().Type();
+        }
+    } else |_| {}
+    @compileError(utilz.expected("slice-like type, ").foundType(T));
+}
+
+/// Behaves exactly like `AsSliceWithSentinel`, except that the child type of
+/// the slice is required to be `E`.
+///
+/// See also: `AsSliceOfWithSentinel`, `AsSlice`, `AsSliceOfNoSentinel`
+pub fn AsSliceOfWithSentinel(comptime T: type, comptime E: type, comptime sentinel: E) type {
+    var slice = forType(T) catch {
+        @compileError(utilz.expected("slice-like type, ").foundType(T));
+    };
+
+    if (!slice.conv.isDirect() or slice.child != E)
+        @compileError(utilz.expected("slice-like type, ").foundType(T));
+
+    slice.sentinel = &sentinel;
+
+    return slice.Type();
+}
+
+/// Converts `T` to a slice type.
+///
+/// Unlike `AsSlice`, this function is as permissive as possible so an implicit
+/// coercion from `T` to `ToSlice(T)` may not always compile. Use `toSlice` to
+/// properly coerce `T` to a slice
+///
+/// **WARNING**: Some conversions that are allowed by this function may take
+/// O(n) time to complete
+///
+/// See also: `AsSlice`, `ToSliceOf`, `AsSliceOf`
+pub fn ToSlice(comptime T: type) type {
+    const slice = forType(T) catch {
+        @compileError(utilz.expected("slice-like type, ").foundType(T));
+    };
+
+    return slice.Type();
+}
+
+/// Behaves exactly like `ToSlice`, except that the child type of the slice is
+/// required to be `E`
+///
+/// Unlike `AsSliceOf`, this function is as permissive as possible so an implicit
+/// coercion from `T` to `ToSliceOf(T, E)` may not always compile. Use
+/// `forType(T).convert()` to convert a `T` to a slice automatically.
+///
+/// **WARNING**: Some conversions that are allowed by this function may take
+/// O(n) time to complete
+///
+/// See also: `ToSlice`, `AsSliceOf`, `AsSlice`
+pub fn ToSliceOf(comptime T: type, comptime E: type) type {
+    if (forType(T)) |slice| {
+        if (slice.child == E)
+            return slice.Type();
+    } else |_| {}
+    @compileError(utilz.expected("slice-like type").ofType(E).foundType(T));
 }
 
 const std = @import("std");
@@ -246,6 +484,18 @@ const ArrayInfo = Type.Array;
 const VecInfo = Type.Vector;
 const assert = std.debug.assert;
 
+const testing = std.testing;
+
 test {
-    std.testing.refAllDecls(@This());
+    testing.refAllDecls(@This());
+}
+
+test isCoercible {
+    const expect = testing.expect;
+
+    try expect(isCoercible([]const u8));
+    try expect(!isCoercible(void));
+    try expect(isCoercible(*[15:75]i128));
+    try expect(isCoercible(*const [15]Type));
+    try expect(!isCoercible([15]u8));
 }

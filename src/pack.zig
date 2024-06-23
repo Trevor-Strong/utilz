@@ -1,13 +1,11 @@
 //! Packed type utilities (`packed struct` and `packed union`)
 
-
 pub fn isPacked(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         inline .Struct, .Union => |info| info.layout == .@"packed",
         else => false,
     };
 }
-
 
 /// Get the integer type backing the packed type `T`
 pub fn Int(comptime T: type) type {
@@ -20,7 +18,7 @@ pub fn Int(comptime T: type) type {
         else => {},
     }
 
-    @compileError(utilz.unexpectedTypeMsg("Expected a packed struct or union,", T));
+    @compileError(utilz.expected("a packed struct or union, ").foundType(T));
 }
 
 pub inline fn byteSwap(packed_val: anytype) @TypeOf(packed_val) {
@@ -52,10 +50,10 @@ pub fn eql(lhs: anytype, rhs: anytype) bool {
         } else if (isPacked(R)) {
             break :Packed R;
         } else {
-            @compileError(utilz.p(
-                "Expected packed union or struct, found {} and {}",
-                .{ L, R },
-            ));
+            @compileError(utilz.expected("packed union or struct, found ")
+                .addType(L)
+                .append(" and ")
+                .addType(R));
         }
     };
 
@@ -88,4 +86,38 @@ const testing = std.testing;
 
 test {
     testing.refAllDecls(@This());
+}
+
+const U32 = packed struct { x: u32 };
+
+fn testToInt(x: u32) !void {
+    try testing.expectEqual(x, toInt(U32{ .x = x }));
+}
+
+test toInt {
+    try testToInt(0);
+    try testToInt(15);
+    try testToInt(0xFEEDBEEF);
+    try testToInt(69420);
+}
+
+fn testFromInt(x: u32) !void {
+    try testing.expectEqual(U32{ .x = x }, fromInt(U32, x));
+}
+
+test fromInt {
+    try testFromInt(0);
+    try testFromInt(15);
+    try testFromInt(0xFEEDBEEF);
+    try testFromInt(69420);
+}
+
+fn testByteSwap(x: u32) !void {
+    try testing.expectEqual(U32{ .x = @byteSwap(x) }, byteSwap(U32{ .x = x }));
+}
+
+test byteSwap {
+    try testByteSwap(0);
+    try testByteSwap(0x11_22_33_44);
+    try testByteSwap(0xFEEDBEEF);
 }

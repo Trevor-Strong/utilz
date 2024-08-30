@@ -2,6 +2,14 @@ const std = @import("std");
 
 pub const pack = @import("pack.zig");
 pub const slice = @import("slice.zig");
+pub const meta = @import("meta.zig");
+pub const list = @import("list.zig");
+pub const NullAllocator = @import("NullAllocator.zig");
+
+pub const null_allocator = std.mem.Allocator{
+    .ptr = undefined,
+    .vtable = &NullAllocator.vtable,
+};
 
 /// Returns `"Expected " ++ message ++ "found '" ++ @typeName(T) ++ "'"`.
 ///

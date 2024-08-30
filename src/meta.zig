@@ -14,6 +14,14 @@ pub fn Object(comptime T: type) type {
     };
 }
 
+/// If `T` is an optional type `?U`, return `U`; otherwise, return `T`.
+pub fn Required(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .Optional => |opt_info| opt_info.child,
+        else => T,
+    };
+}
+
 pub fn isComptimeOnly(comptime T: type) bool {
     switch (@typeInfo(T)) {
         .Type,

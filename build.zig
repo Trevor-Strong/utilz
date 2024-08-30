@@ -5,7 +5,18 @@ const Build = std.Build;
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const pic = b.option(bool, "pic", "Generate Position Independent Code");
+    const build_test_only = b.option(
+        bool,
+        "test-compile",
+        "Only build the tests, don't run them",
+    ) orelse false;
+
+    const test_filter: []const []const u8 = b.option(
+        []const []const u8,
+        "test-filter",
+        "Skip tests that do not match the filter",
+    ) orelse &[_][]const u8{};
+
     const check_fmt = b.option(
         bool,
         "check_fmt",
@@ -18,7 +29,6 @@ pub fn build(b: *Build) void {
         .target = target,
         .optimize = optimize,
         .root_source_file = root_source_file,
-        .pic = pic,
     });
     utilz.addImport("utilz", utilz);
 
@@ -38,11 +48,14 @@ pub fn build(b: *Build) void {
         .root_source_file = root_source_file,
         .target = target,
         .optimize = optimize,
-        .pic = pic,
+        .filters = test_filter,
     });
     unit_tests.root_module.addImport("utilz", &unit_tests.root_module);
 
-    const run_unit_tests = b.addRunArtifact(unit_tests);
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
+    const test_step: *Build.Step = if (build_test_only)
+        &unit_tests.step
+    else
+        &b.addRunArtifact(unit_tests).step;
+    const test_tls = b.step("test", "Run unit tests");
+    test_tls.dependOn(test_step);
 }

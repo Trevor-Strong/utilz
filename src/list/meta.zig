@@ -95,5 +95,9 @@ pub fn getLinkType(comptime T: type, comptime MaybeLink: type) ?LinkType {
     }
 }
 
+pub fn linkTypeOf(comptime T: type, comptime link_field: std.meta.FieldEnum(T)) ?LinkType {
+    return getLinkType(T, std.meta.FieldType(T, link_field));
+}
+
 const std = @import("std");
-const util = @import("../util.zig");
+const util = @import("utilz");

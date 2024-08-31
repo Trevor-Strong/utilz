@@ -1,5 +1,8 @@
 //! Packed type utilities (`packed struct` and `packed union`)
+const std = @import("std");
+const utilz = @import("utilz");
 
+/// True if `T` is a packed union or struct type
 pub fn isPacked(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         inline .Struct, .Union => |info| info.layout == .@"packed",
@@ -15,12 +18,14 @@ pub fn Int(comptime T: type) type {
             .@"packed" => return std.meta.Int(.unsigned, @bitSizeOf(T)),
             .@"extern", .auto => {},
         },
+        .Enum => |e_info| return e_info.tag_type,
         else => {},
     }
 
-    @compileError(utilz.expected("a packed struct or union, ").foundType(T));
+    @compileError("Expected an enum, packed struct, or packed union '" ++ @typeName(T) ++ "'");
 }
 
+/// does `@byteSwap` on a packed struct or union
 pub inline fn byteSwap(packed_val: anytype) @TypeOf(packed_val) {
     const T = @TypeOf(packed_val);
     return fromInt(T, @byteSwap(toInt(packed_val)));
@@ -28,36 +33,20 @@ pub inline fn byteSwap(packed_val: anytype) @TypeOf(packed_val) {
 
 /// Converts a packed struct or union to its backing integer type
 pub fn toInt(packed_val: anytype) Int(@TypeOf(packed_val)) {
-    return @bitCast(packed_val);
+    return switch (@typeInfo(@TypeOf(packed_val))) {
+        .Struct, .Union => @bitCast(packed_val),
+        .Enum => @intFromEnum(packed_val),
+        else => unreachable,
+    };
 }
 
 /// Converts an integer to a packed struct or union of the same size
 pub fn fromInt(comptime T: type, int: Int(T)) T {
-    return @bitCast(int);
-}
-
-pub fn eql(lhs: anytype, rhs: anytype) bool {
-    const L = @TypeOf(lhs);
-    const R = @TypeOf(rhs);
-
-    const Packed = Packed: {
-        if (isPacked(L)) {
-            if (isPacked(R) and L != R) {
-                @compileError(utilz.p("Cannot compare different types '{}' " ++
-                    "and '{}' for equality", .{ L, R }));
-            }
-            break :Packed L;
-        } else if (isPacked(R)) {
-            break :Packed R;
-        } else {
-            @compileError(utilz.expected("packed union or struct, found ")
-                .addType(L)
-                .append(" and ")
-                .addType(R));
-        }
+    return switch (@typeInfo(T)) {
+        .Enum => @enumFromInt(int),
+        .Struct, .Union => @bitCast(int),
+        else => unreachable,
     };
-
-    return toInt(@as(Packed, lhs)) == toInt(@as(Packed, rhs));
 }
 
 /// Creates a function that performs a bit cast from the type `From` to the
@@ -80,8 +69,6 @@ pub fn boundBitCast(comptime From: type, comptime To: type) fn (From) To {
     }.f;
 }
 
-const std = @import("std");
-const utilz = @import("utilz");
 const testing = std.testing;
 
 test {

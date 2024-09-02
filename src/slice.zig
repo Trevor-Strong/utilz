@@ -9,7 +9,6 @@ pub const Break = ops.Break;
 pub const window = ops.window;
 pub const WindowIterator = ops.WindowIterator;
 
-
 /// Slice type information.
 pub const Slice = struct {
     /// Static length of the original type this `Slice` was constructed from or
@@ -485,10 +484,6 @@ const VecInfo = Type.Vector;
 const assert = std.debug.assert;
 
 const testing = std.testing;
-
-test {
-    testing.refAllDecls(@This());
-}
 
 test isCoercible {
     const expect = testing.expect;

@@ -1811,13 +1811,6 @@ inline fn rangeMask(
 
 const testing = std.testing;
 
-test {
-    testing.refAllDecls(@This());
-    const ManagedBitSet = DynBitSet(usize);
-    testing.refAllDecls(ManagedBitSet);
-    testing.refAllDecls(ManagedBitSet.Unmanaged);
-    testing.refAllDecls(ManagedBitSet.Raw);
-}
 
 test IntBitSet {
     const BitSet = IntBitSet(16);

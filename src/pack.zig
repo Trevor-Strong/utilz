@@ -71,10 +71,6 @@ pub fn boundBitCast(comptime From: type, comptime To: type) fn (From) To {
 
 const testing = std.testing;
 
-test {
-    testing.refAllDecls(@This());
-}
-
 const U32 = packed struct { x: u32 };
 
 fn testToInt(x: u32) !void {

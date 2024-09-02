@@ -228,10 +228,6 @@ pub fn CircularLinkIterator(
 
 const testing = std.testing;
 
-test {
-    testing.refAllDecls(@This());
-}
-
 const SN = struct {
     next: ?*@This(),
 

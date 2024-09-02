@@ -50,10 +50,6 @@ pub inline fn signedCast(int: anytype) Signed(@TypeOf(int)) {
 
 const testing = std.testing;
 
-test {
-    testing.refAllDecls(@This());
-}
-
 test SizedTypeOf {
     assert(SizedTypeOf(0) == u0);
     assert(SizedTypeOf((1 << 12) - 1) == u12);

@@ -12,7 +12,7 @@ pub fn Struct(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        pub inline fn hasFn (comptime name: AnyName) bool {
+        pub inline fn hasFn(comptime name: AnyName) bool {
             return @hasField(Fn, @tagName(name));
         }
 
@@ -41,7 +41,7 @@ pub fn Struct(comptime T: type) type {
             var enum_fields: [fn_infos.len]std.builtin.Type.EnumField = undefined;
             for (fn_infos, 0..) |func, i| {
                 enum_fields[i] = .{
-                    .name = func.name,
+                    .name = func.name ++ "",
                     .value = i,
                 };
             }
@@ -61,14 +61,14 @@ pub fn Struct(comptime T: type) type {
             var i = 0;
             for (fn_infos, 0..) |func, info_index| {
                 if (func.is_method) {
-                enum_fields[i] = .{
-                    .name = func.name,
-                    .value = info_index,
-                };
-                i+=1;
+                    enum_fields[i] = .{
+                        .name = func.name ++ "",
+                        .value = info_index,
+                    };
+                    i += 1;
                 }
             }
-            const enum_fields_const = enum_fields;
+            const enum_fields_const = enum_fields[0..i].*;
             break :Method @Type(.{
                 .Enum = .{
                     .tag_type = std.math.IntFittingRange(0, fn_infos.len),
@@ -95,17 +95,16 @@ pub fn Struct(comptime T: type) type {
                             .return_type = fn_info.return_type,
                             .params = fn_info.params,
                             .is_method = (fn_info.params.len > 0 and fn_info.params[0].type == null) or
-                                        utilz.meta.isMethodInfo(T, fn_info),
+                                utilz.meta.isMethodInfo(T, fn_info),
                         };
                         i += 1;
                     },
-                    else => {}
+                    else => {},
                 }
             }
-            const infos_const = infos;
+            const infos_const = infos[0..i].*;
             break :fn_infos &infos_const;
         };
-
     };
 }
 

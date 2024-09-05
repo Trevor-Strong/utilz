@@ -76,7 +76,7 @@ pub fn isComptimeOnlyInfo(comptime type_info: std.builtin.Type) bool {
 }
 
 pub fn isMultiValueZst(comptime T: type) bool {
-    return @sizeOf(T) != 0 and isMultiValueZstInfo(@typeInfo(T));
+    return isMultiValueZstInfo(@typeInfo(T));
 }
 
 /// Determines if `T` is a Zero Size Type (ZST) that can represent multiple
@@ -100,6 +100,53 @@ pub fn isMultiValueZstInfo(comptime type_info: std.builtin.Type) bool {
         .ErrorUnion => |eu_info| isMultiValueZst(eu_info.payload),
         else => false,
     };
+}
+
+/// `true` if `T` is `noreturn` like in that it has *no* possible values;
+/// otherwise, `false`.
+///
+/// This function returns true for
+/// - `noreturn`
+/// - `opaque` types
+/// - `error{}` and equivalent inferred function error sets
+/// - Exhaustive `enum`s with 0 fields
+/// - `union`s with 0 fields
+/// - `struct`s with at least one field that is `noreturn`-like
+/// - Arrays and vectors of a `noreturn`-like type
+///
+/// See also: `isNoReturnLikeInfo`, `isZst`
+pub fn isNoReturnLike(comptime T: type) bool {
+    return isNoReturnLikeInfo(@typeInfo(T));
+}
+
+/// `true` if `T` is `noreturn` like in that it has *no* possible values;
+/// otherwise, `false`.
+///
+/// This function returns true for
+/// - `noreturn`
+/// - `opaque` types
+/// - `error{}` and equivalent inferred function error sets
+/// - Exhaustive `enum`s with 0 fields
+/// - `union`s with 0 fields
+/// - `struct`s with at least one field that is `noreturn`-like
+/// - Arrays and vectors of a `noreturn`-like type
+pub fn isNoReturnLikeInfo(comptime type_info: std.builtin.Type) bool {
+    switch (type_info) {
+        .NoReturn, .Opaque => return true,
+        .Enum => |enum_info| return enum_info.is_exhaustive and enum_info.fields.len == 0,
+        .Union => |union_info| return union_info.fields.len == 0,
+        .ErrorSet => |errors| return errors != null and errors.?.len == 0,
+        .Array => |arr_info| return isNoReturnLike(arr_info.child),
+        .Vector => |vec_info| return isNoReturnLike(vec_info.child),
+        .Struct => |struct_info| {
+            for (struct_info.fields) |f| {
+                if (!f.is_comptime and isNoReturnLike(f.type))
+                    return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
 }
 
 pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
@@ -135,6 +182,44 @@ pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
         .Optional => |opt_info| return @sizeOf(?opt_info.child) == 0,
         else => return false,
     }
+}
+
+/// Returns `true` if `Fn` would be callable as a method of `Self`; otherwise
+/// returns `false`. If the first parameter of `Fn` is generic, this function
+/// always returns `false`
+pub fn isMethod(comptime Self: type, comptime Fn: type) bool {
+    const fn_info = @typeInfo(Fn);
+    if (fn_info != .Fn) return false;
+    return isMethodInfo(Self, fn_info.Fn);
+}
+
+pub fn isMethodInfo(
+    comptime Self: type,
+    comptime fn_info: std.builtin.Type.Fn,
+) bool {
+    if (fn_info.params.len == 0) return false;
+    const T = fn_info.params[0].type orelse return false;
+    if (T == Self) return true;
+    const ptr_info = switch (@typeInfo(T)) {
+        .Pointer => |ptr_info| return switch (ptr_info.size) {
+            .C, .One => ptr_info.child == Self,
+            .Many, .Slice => false,
+        },
+        .Optional => |opt_info| opt_info.child == Self or switch (@typeInfo(opt_info.child)) {
+            .Pointer => |ptr_info| switch (ptr_info.size) {
+                .One => ptr_info.child == Self,
+                .C => false, // optional `C` pointers don't count
+                .Many, .Slice => false,
+            },
+        },
+        .ErrorUnion => |eu_info| return eu_info.payload == Self,
+        else => return false,
+    };
+    switch (ptr_info.size) {
+        .C, .One => {},
+        .Many, .Slice => return false,
+    }
+    return ptr_info.child == Self;
 }
 
 pub const PointerOptions = struct {

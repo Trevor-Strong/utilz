@@ -2,7 +2,7 @@ const std = @import("std");
 
 const NullAllocator = @This();
 
-pub fn allocator(self: *NullAllocator) std.mem.Allocator {
+pub fn allocator(self: NullAllocator) std.mem.Allocator {
     _ = self;
     return .{
         .ptr = undefined,

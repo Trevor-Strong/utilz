@@ -2,6 +2,23 @@
 const std = @import("std");
 const utilz = @import("utilz");
 
+pub fn isPackable(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .Void, .Int, .Float, .Enum => true,
+        .Vector => |vec_info| isPackable(vec_info.child),
+        inline .Struct, .Union => |info| info.layout == .@"packed",
+        .Pointer => |ptr_info| ptr_info.size != .Slice,
+        .Optional => |opt_info| switch (@typeInfo(opt_info.child)) {
+            .Pointer => |ptr_info| switch (ptr_info.size) {
+                .Slice, .C => false,
+                .One, .Many => !ptr_info.is_allowzero,
+            },
+            else => false,
+        },
+        else => false,
+    };
+}
+
 /// True if `T` is a packed union or struct type
 pub fn isPacked(comptime T: type) bool {
     return switch (@typeInfo(T)) {

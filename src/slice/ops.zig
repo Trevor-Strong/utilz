@@ -1,5 +1,10 @@
 //! Implementations of operations on slices.
 
+const std = @import("std");
+const utilz = @import("utilz");
+
+const assert = std.debug.assert;
+
 /// Converts the given pointer to a slice.
 ///
 /// Accepts:
@@ -90,11 +95,6 @@ pub fn WindowIterator(comptime T: type) type {
         }
     };
 }
-
-const std = @import("std");
-const utilz = @import("utilz");
-
-const assert = std.debug.assert;
 
 const testing = std.testing;
 

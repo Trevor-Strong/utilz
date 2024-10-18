@@ -2,15 +2,11 @@ const std = @import("std");
 
 const Build = std.Build;
 
+pub const build_util = @import("build_util.zig");
+
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const build_test_only = b.option(
-        bool,
-        "test-compile",
-        "Only build the tests, don't run them",
-    ) orelse false;
-
     const test_filter: []const []const u8 = b.option(
         []const []const u8,
         "test-filter",
@@ -23,39 +19,30 @@ pub fn build(b: *Build) void {
         "Check the formatting of files instead of fixing it",
     ) orelse false;
 
-    const root_source_file = b.path("src/utilz.zig");
+    // Create module and a corresponding test step.
 
-    const utilz = b.addModule("lib", .{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = root_source_file,
-    });
-    utilz.addImport("utilz", utilz);
-
-    // Formatting
-
-    const fmt = b.addFmt(.{
-        .paths = &.{ "src", "build.zig", "build.zig.zon" },
-        .check = check_fmt,
+    _ = build_util.addModuleAndTest(b, .{
+        .name = "utilz",
+        .import_self = .yes,
+        .test_filters = test_filter,
+        .module = .{
+            .root_source_file = b.path("src/utilz.zig"),
+            .target = target,
+            .optimize = optimize,
+        },
     });
 
-    const fmt_step = b.step("fmt", "'zig fmt' the source files");
-    fmt_step.dependOn(&fmt.step);
+    // Formatting step
 
-    // Test
-
-    const unit_tests = b.addTest(.{
-        .root_source_file = root_source_file,
-        .target = target,
-        .optimize = optimize,
-        .filters = test_filter,
+    build_util.addFmtStep(b, "fmt", .{
+        .fmt = .{
+            .check = check_fmt,
+            .paths = &.{
+                "src",
+                "build.zig",
+                "build.zig.zon",
+                "build_util.zig",
+            },
+        },
     });
-    unit_tests.root_module.addImport("utilz", &unit_tests.root_module);
-
-    const test_step: *Build.Step = if (build_test_only)
-        &unit_tests.step
-    else
-        &b.addRunArtifact(unit_tests).step;
-    const test_tls = b.step("test", "Run unit tests");
-    test_tls.dependOn(test_step);
 }

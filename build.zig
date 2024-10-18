@@ -23,7 +23,7 @@ pub fn build(b: *Build) void {
         "Check the formatting of files instead of fixing it",
     ) orelse false;
 
-    const root_source_file = b.path("src/util.zig");
+    const root_source_file = b.path("src/utilz.zig");
 
     const utilz = b.addModule("utilz", .{
         .target = target,

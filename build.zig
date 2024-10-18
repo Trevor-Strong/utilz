@@ -2,7 +2,7 @@ const std = @import("std");
 
 const Build = std.Build;
 
-pub const build_util = @import("build_util.zig");
+pub const build_util = @import("./build_util.zig");
 
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});

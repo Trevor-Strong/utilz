@@ -51,13 +51,13 @@ pub const Slice = struct {
                 slice.conv = .{};
             },
             .One => switch (@typeInfo(ptr_info.child)) {
-                .Array => |arr_info| {
+                .array => |arr_info| {
                     slice.len = arr_info.len;
                     slice.child = arr_info.child;
                     slice.sentinel = arr_info.sentinel;
                     slice.conv = .{};
                 },
-                .Vector => |vec_info| {
+                .vector => |vec_info| {
                     const bit_size = @bitSizeOf(vec_info.child);
                     if (bit_size % 8 != 0 or !std.math.isPowerOfTwo(bit_size)) {
                         return error.NotSliceCoercible;
@@ -76,13 +76,13 @@ pub const Slice = struct {
                 slice.conv = .{ .slice_to = true };
             },
             .C => switch (@typeInfo(ptr_info.child)) {
-                .Array => |arr_info| {
+                .array => |arr_info| {
                     slice.len = arr_info.len;
                     slice.child = arr_info.child;
                     slice.sentinel = arr_info.sentinel;
                     slice.conv = .{ .is_c = true };
                 },
-                .Vector => |vec_info| {
+                .vector => |vec_info| {
                     slice.len = vec_info.len;
                     slice.child = vec_info.child;
                     slice.conv = .{ .is_c = true, .vec_to_arr = true };
@@ -151,7 +151,7 @@ pub const Slice = struct {
     pub fn ArrayPtr(comptime slice: Slice) type {
         const len = slice.len orelse @compileError("Length not statically known");
         return @Type(.{
-            .Pointer = .{
+            .pointer = .{
                 .size = .One,
                 .child = if (slice.getSentinel()) |sentinel| [len:sentinel]slice.child else [len]slice.child,
                 .sentinel = null,
@@ -171,7 +171,7 @@ pub const Slice = struct {
 
     pub fn typeInfo(comptime slice: Slice) std.builtin.Type {
         return .{
-            .Pointer = .{
+            .pointer = .{
                 .child = slice.child,
                 .size = .Slice,
                 .alignment = slice.alignment,
@@ -204,7 +204,7 @@ pub const Slice = struct {
             if (slice.len) |arr_len| {
                 ptr_info.size = .One;
                 ptr_info.child = @Type(.{
-                    .Array = .{
+                    .array = .{
                         .child = slice.child,
                         .len = arr_len,
                         .sentinel = slice.sentinel,
@@ -218,7 +218,7 @@ pub const Slice = struct {
             }
         } else if (slice.conv.vec_to_arr) {
             ptr_info.child = @Type(.{
-                .Vector = .{
+                .vector = .{
                     .child = slice.child,
                     .len = slice.len.?,
                 },
@@ -238,10 +238,10 @@ pub const Slice = struct {
                 ptr_info.sentinel = slice.sentinel;
             }
         } else { // C pointer to array
-            assert(utilz.pack.eql(slice.conv, .{ .is_c = true }));
+            assert(slice.conv == .{ .is_c = true });
             ptr_info.size = .C;
             ptr_info.child = @Type(.{
-                .Array = .{
+                .array = .{
                     .len = slice.len.?,
                     .child = slice.child,
                     .sentinel = slice.sentinel,
@@ -249,7 +249,7 @@ pub const Slice = struct {
             });
             ptr_info.sentinel = null;
         }
-        return .{ .Pointer = ptr_info };
+        return .{ .pointer = ptr_info };
     }
 
     /// Identifies the "shape" of the type used to construct this `Slice`.
@@ -326,7 +326,7 @@ pub fn isCoercible(comptime T: type) bool {
 /// See also: `Slice`, `Slice.fromPtrInfo`, `isCoercible`
 pub fn forType(comptime T: type) Slice.Error!Slice {
     return switch (@typeInfo(T)) {
-        .Pointer => |ptr_info| return Slice.fromPtrInfo(ptr_info),
+        .pointer => |ptr_info| return Slice.fromPtrInfo(ptr_info),
         else => error.NotSliceConvertible,
     };
 }
@@ -338,7 +338,7 @@ pub fn forType(comptime T: type) Slice.Error!Slice {
 /// stricter definition of slice type is needed
 pub fn Elem(comptime T: type) type {
     const slice = forType(T) catch {
-        @compileError(utilz.expectedTypeMsg("slice-like type, ", T));
+        @compileError("Expected slice like type, found '" ++ @typeName(T) ++ "'");
     };
 
     return slice.child;
@@ -354,7 +354,7 @@ pub fn AsSlice(comptime T: type) type {
             return info.Type();
         }
     } else |_| {}
-    @compileError(utilz.expected("slice-like type, ").foundType(T));
+    @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
 }
 
 /// Coerces `T` to a slice type, removing any sentinel present in `T`
@@ -369,7 +369,7 @@ pub fn AsSliceNoSentinel(comptime T: type) type {
             return slice.withoutSentinel().Type();
         }
     } else |_| {}
-    @compileError(utilz.expected("slice-like type, ").foundType(T));
+    @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
 }
 
 /// Coerces `T` to a slice type with the given sentinel value, overriding the
@@ -381,11 +381,11 @@ pub fn AsSliceNoSentinel(comptime T: type) type {
 /// See also: `AsSlice`, `AsSliceNoSentinel`, `AsSliceOfWithSentinel`
 pub fn AsSliceWithSentinel(comptime T: type, comptime sentinel: Elem(T)) type {
     var slice = forType(T) catch {
-        @compileError(utilz.expected("slice-like type, ").foundType(T));
+        @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
     };
 
     if (!slice.conv.isDirect())
-        @compileError(utilz.expected("slice-like type, ").foundType(T));
+        @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
 
     slice.sentinel = &sentinel;
 
@@ -401,7 +401,9 @@ pub fn AsSliceOf(comptime T: type, comptime E: type) type {
         if (slice.conv.isDirect() and slice.child == E)
             return slice.Type();
     } else |_| {}
-    @compileError(utilz.expected("slice-like type").ofType(E).foundType(T));
+    @compileError(
+        "Expected slice of '" ++ @typeName(E) ++ "', found '" ++ @typeName(T) ++ "'",
+    );
 }
 
 /// Behaves exactly like `AsSliceNoSentinel`, except that the child type of the
@@ -414,7 +416,7 @@ pub fn AsSliceOfNoSentinel(comptime T: type, comptime E: type) type {
             return slice.withoutSentinel().Type();
         }
     } else |_| {}
-    @compileError(utilz.expected("slice-like type, ").foundType(T));
+    @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
 }
 
 /// Behaves exactly like `AsSliceWithSentinel`, except that the child type of
@@ -423,11 +425,11 @@ pub fn AsSliceOfNoSentinel(comptime T: type, comptime E: type) type {
 /// See also: `AsSliceOfWithSentinel`, `AsSlice`, `AsSliceOfNoSentinel`
 pub fn AsSliceOfWithSentinel(comptime T: type, comptime E: type, comptime sentinel: E) type {
     var slice = forType(T) catch {
-        @compileError(utilz.expected("slice-like type, ").foundType(T));
+        @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
     };
 
     if (!slice.conv.isDirect() or slice.child != E)
-        @compileError(utilz.expected("slice-like type, ").foundType(T));
+        @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
 
     slice.sentinel = &sentinel;
 
@@ -446,7 +448,7 @@ pub fn AsSliceOfWithSentinel(comptime T: type, comptime E: type, comptime sentin
 /// See also: `AsSlice`, `ToSliceOf`, `AsSliceOf`
 pub fn ToSlice(comptime T: type) type {
     const slice = forType(T) catch {
-        @compileError(utilz.expected("slice-like type, ").foundType(T));
+        @compileError("Expected slice-like type, found '" ++ @typeName(T) ++ "'");
     };
 
     return slice.Type();
@@ -468,7 +470,9 @@ pub fn ToSliceOf(comptime T: type, comptime E: type) type {
         if (slice.child == E)
             return slice.Type();
     } else |_| {}
-    @compileError(utilz.expected("slice-like type").ofType(E).foundType(T));
+    @compileError(
+        "Expected slice of '" ++ @typeName(E) ++ "', found '" ++ @typeName(T) ++ "'",
+    );
 }
 
 const std = @import("std");
@@ -484,6 +488,10 @@ const VecInfo = Type.Vector;
 const assert = std.debug.assert;
 
 const testing = std.testing;
+
+test {
+    testing.refAllDecls(@This());
+}
 
 test isCoercible {
     const expect = testing.expect;

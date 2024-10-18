@@ -6,9 +6,9 @@ const assert = std.debug.assert;
 /// otherwise returns `T`
 pub fn Object(comptime T: type) type {
     return switch (@typeInfo(T)) {
-        .Pointer => |ptr_info| ptr_info.child,
-        .Optional => |opt_info| switch (@typeInfo(opt_info.child)) {
-            .Pointer => |ptr_info| ptr_info.child,
+        .pointer => |ptr_info| ptr_info.child,
+        .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| ptr_info.child,
             else => T,
         },
         else => T,
@@ -18,7 +18,7 @@ pub fn Object(comptime T: type) type {
 /// If `T` is an optional type `?U`, return `U`; otherwise, return `T`.
 pub fn Required(comptime T: type) type {
     return switch (@typeInfo(T)) {
-        .Optional => |opt_info| opt_info.child,
+        .optional => |opt_info| opt_info.child,
         else => T,
     };
 }
@@ -54,23 +54,23 @@ pub fn isComptimeOnly(comptime T: type) bool {
 
 pub fn isComptimeOnlyInfo(comptime type_info: std.builtin.Type) bool {
     switch (type_info) {
-        .Type,
-        .ComptimeInt,
-        .ComptimeFloat,
-        .Fn,
-        .EnumLiteral,
+        .type,
+        .comptime_int,
+        .comptime_float,
+        .@"fn",
+        .enum_literal,
         => return true,
-        .Struct => |s_info| for (s_info.fields) |f| {
+        .@"struct" => |s_info| for (s_info.fields) |f| {
             if (!f.is_comptime and isComptimeOnly(f.type)) return true;
         } else return false,
-        .Union => |u_info| for (u_info.fields) |f| {
+        .@"union" => |u_info| for (u_info.fields) |f| {
             if (isComptimeOnly(f.type)) return true;
         } else return false,
-        inline .Vector,
-        .Array,
-        .Optional,
+        inline .vector,
+        .array,
+        .optional,
         => |info| return isComptimeOnly(info.child),
-        .ErrorUnion => |eu_info| return isComptimeOnly(eu_info.payload),
+        .error_union => |eu_info| return isComptimeOnly(eu_info.payload),
         else => return false,
     }
 }
@@ -84,20 +84,20 @@ pub fn isMultiValueZst(comptime T: type) bool {
 /// `comptime` only types.
 pub fn isMultiValueZstInfo(comptime type_info: std.builtin.Type) bool {
     return switch (@typeInfo(type_info)) {
-        .Fn,
-        .Type,
-        .ComptimeInt,
-        .ComptimeFloat,
-        .EnumLiteral,
+        .@"fn",
+        .type,
+        .comptime_int,
+        .comptime_float,
+        .enum_literal,
         => true,
-        inline .Vector, .Array => |info| info.len == 0 or isMultiValueZst(info.child),
-        .Struct => |s_info| for (s_info.fields) |f| {
+        inline .vector, .array => |info| info.len == 0 or isMultiValueZst(info.child),
+        .@"struct" => |s_info| for (s_info.fields) |f| {
             if (!f.is_comptime and isMultiValueZst(f.type)) break true;
         } else false,
-        .Union => |u_info| for (u_info.fields) |f| {
+        .@"union" => |u_info| for (u_info.fields) |f| {
             if (isMultiValueZst(f.type)) break true;
         } else false,
-        .ErrorUnion => |eu_info| isMultiValueZst(eu_info.payload),
+        .error_union => |eu_info| isMultiValueZst(eu_info.payload),
         else => false,
     };
 }
@@ -132,13 +132,13 @@ pub fn isNoReturnLike(comptime T: type) bool {
 /// - Arrays and vectors of a `noreturn`-like type
 pub fn isNoReturnLikeInfo(comptime type_info: std.builtin.Type) bool {
     switch (type_info) {
-        .NoReturn, .Opaque => return true,
-        .Enum => |enum_info| return enum_info.is_exhaustive and enum_info.fields.len == 0,
-        .Union => |union_info| return union_info.fields.len == 0,
+        .noreturn, .@"opaque" => return true,
+        .@"enum" => |enum_info| return enum_info.is_exhaustive and enum_info.fields.len == 0,
+        .@"union" => |union_info| return union_info.fields.len == 0,
         .ErrorSet => |errors| return errors != null and errors.?.len == 0,
-        .Array => |arr_info| return isNoReturnLike(arr_info.child),
-        .Vector => |vec_info| return isNoReturnLike(vec_info.child),
-        .Struct => |struct_info| {
+        .array => |arr_info| return isNoReturnLike(arr_info.child),
+        .vector => |vec_info| return isNoReturnLike(vec_info.child),
+        .@"struct" => |struct_info| {
             for (struct_info.fields) |f| {
                 if (!f.is_comptime and isNoReturnLike(f.type))
                     return true;
@@ -151,20 +151,20 @@ pub fn isNoReturnLikeInfo(comptime type_info: std.builtin.Type) bool {
 
 pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
     switch (type_info) {
-        .Fn,
-        .Type,
-        .Void,
-        .Null,
-        .Undefined,
-        .ComptimeInt,
-        .ComptimeFloat,
-        .EnumLiteral,
+        .@"fn",
+        .type,
+        .void,
+        .null,
+        .undefined,
+        .comptime_int,
+        .comptime_float,
+        .enum_literal,
         => return true,
-        .Int, .Float => |num_info| return num_info.bits == 0,
-        .Vector => |vec_info| return vec_info.len == 0 or @sizeOf(vec_info.child) == 0,
-        .Array => |arr_info| return @sizeOf(arr_info.child) == 0 or (arr_info.len == 0 and arr_info.sentinel == null),
-        .Enum => |enum_info| return @sizeOf(enum_info.tag_type) == 0,
-        .Union => |union_info| {
+        .int, .float => |num_info| return num_info.bits == 0,
+        .vector => |vec_info| return vec_info.len == 0 or @sizeOf(vec_info.child) == 0,
+        .array => |arr_info| return @sizeOf(arr_info.child) == 0 or (arr_info.len == 0 and arr_info.sentinel == null),
+        .@"enum" => |enum_info| return @sizeOf(enum_info.tag_type) == 0,
+        .@"union" => |union_info| {
             if (union_info.tag_type) |Tag| {
                 if (@sizeOf(Tag) != 0) return false;
             }
@@ -173,13 +173,13 @@ pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
             }
             return true;
         },
-        .Struct => |struct_info| {
+        .@"struct" => |struct_info| {
             for (struct_info.fields) |f| {
                 if (!f.is_comptime and @sizeOf(f.type) != 0) return false;
             }
             return true;
         },
-        .Optional => |opt_info| return @sizeOf(?opt_info.child) == 0,
+        .optional => |opt_info| return @sizeOf(?opt_info.child) == 0,
         else => return false,
     }
 }
@@ -189,7 +189,7 @@ pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
 /// always returns `false`
 pub fn isMethod(comptime Self: type, comptime Fn: type) bool {
     const fn_info = @typeInfo(Fn);
-    if (fn_info != .Fn) return false;
+    if (fn_info != .@"fn") return false;
     return isMethodInfo(Self, fn_info.Fn);
 }
 
@@ -201,18 +201,18 @@ pub fn isMethodInfo(
     const T = fn_info.params[0].type orelse return false;
     if (T == Self) return true;
     const ptr_info = switch (@typeInfo(T)) {
-        .Pointer => |ptr_info| return switch (ptr_info.size) {
+        .pointer => |ptr_info| return switch (ptr_info.size) {
             .C, .One => ptr_info.child == Self,
             .Many, .Slice => false,
         },
-        .Optional => |opt_info| opt_info.child == Self or switch (@typeInfo(opt_info.child)) {
-            .Pointer => |ptr_info| switch (ptr_info.size) {
+        .optional => |opt_info| opt_info.child == Self or switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| switch (ptr_info.size) {
                 .One => ptr_info.child == Self,
                 .C => false, // optional `C` pointers don't count
                 .Many, .Slice => false,
             },
         },
-        .ErrorUnion => |eu_info| return eu_info.payload == Self,
+        .error_union => |eu_info| return eu_info.payload == Self,
         else => return false,
     };
     switch (ptr_info.size) {
@@ -228,9 +228,9 @@ pub const PointerOptions = struct {
 
 pub fn isThinPtrEx(comptime T: type, comptime options: PointerOptions) bool {
     return switch (@typeInfo(T)) {
-        .Pointer => |ptr_info| ptr_info.size != .Slice,
-        .Optional => |opt_info| options.allow_optional and switch (@typeInfo(opt_info.child)) {
-            .Pointer => |ptr_info| !ptr_info.is_allowzero and switch (ptr_info.size) {
+        .pointer => |ptr_info| ptr_info.size != .Slice,
+        .optional => |opt_info| options.allow_optional and switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| !ptr_info.is_allowzero and switch (ptr_info.size) {
                 .One, .Many => true,
                 .C, .Slice => false,
             },
@@ -248,9 +248,9 @@ pub fn PtrChild(comptime T: type) type {
 
 pub fn getPtrChild(comptime T: type) error{NonPointerType}!type {
     return switch (@typeInfo(T)) {
-        .Pointer => |ptr_info| ptr_info.child,
-        .Optional => |opt_info| switch (@typeInfo(opt_info.child)) {
-            .Pointer => |ptr_info| ptr_info.child,
+        .pointer => |ptr_info| ptr_info.child,
+        .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| ptr_info.child,
             else => return error.NonPointerType,
         },
         else => return error.NonPointerType,

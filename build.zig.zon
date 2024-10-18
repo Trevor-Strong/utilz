@@ -1,7 +1,7 @@
 .{
     .name = "utilz",
-    .version = "0.1.0-dev",
-    .min_zig_version = "0.13.0",
+    .version = "0.2.0-dev",
+    .min_zig_version = "0.14.0-dev.1939+816dfca0b",
     .dependencies = .{},
     .paths = .{
         "src",

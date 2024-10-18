@@ -4,12 +4,12 @@ const utilz = @import("utilz");
 
 pub fn isPackable(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Void, .Int, .Float, .Enum => true,
-        .Vector => |vec_info| isPackable(vec_info.child),
-        inline .Struct, .Union => |info| info.layout == .@"packed",
-        .Pointer => |ptr_info| ptr_info.size != .Slice,
-        .Optional => |opt_info| switch (@typeInfo(opt_info.child)) {
-            .Pointer => |ptr_info| switch (ptr_info.size) {
+        .void, .int, .float, .@"enum" => true,
+        .vector => |vec_info| isPackable(vec_info.child),
+        inline .@"struct", .@"union" => |info| info.layout == .@"packed",
+        .pointer => |ptr_info| ptr_info.size != .Slice,
+        .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| switch (ptr_info.size) {
                 .Slice, .C => false,
                 .One, .Many => !ptr_info.is_allowzero,
             },
@@ -22,7 +22,7 @@ pub fn isPackable(comptime T: type) bool {
 /// True if `T` is a packed union or struct type
 pub fn isPacked(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        inline .Struct, .Union => |info| info.layout == .@"packed",
+        inline .@"struct", .@"union" => |info| info.layout == .@"packed",
         else => false,
     };
 }
@@ -30,12 +30,12 @@ pub fn isPacked(comptime T: type) bool {
 /// Get the integer type backing the packed type `T`
 pub fn Int(comptime T: type) type {
     switch (@typeInfo(T)) {
-        .Struct => |s_info| if (s_info.backing_integer) |I| return I,
-        .Union => |u_info| switch (u_info.layout) {
+        .@"struct" => |s_info| if (s_info.backing_integer) |I| return I,
+        .@"union" => |u_info| switch (u_info.layout) {
             .@"packed" => return std.meta.Int(.unsigned, @bitSizeOf(T)),
             .@"extern", .auto => {},
         },
-        .Enum => |e_info| return e_info.tag_type,
+        .@"enum" => |e_info| return e_info.tag_type,
         else => {},
     }
 
@@ -51,8 +51,8 @@ pub inline fn byteSwap(packed_val: anytype) @TypeOf(packed_val) {
 /// Converts a packed struct or union to its backing integer type
 pub fn toInt(packed_val: anytype) Int(@TypeOf(packed_val)) {
     return switch (@typeInfo(@TypeOf(packed_val))) {
-        .Struct, .Union => @bitCast(packed_val),
-        .Enum => @intFromEnum(packed_val),
+        .@"struct", .@"union" => @bitCast(packed_val),
+        .@"enum" => @intFromEnum(packed_val),
         else => unreachable,
     };
 }
@@ -60,8 +60,8 @@ pub fn toInt(packed_val: anytype) Int(@TypeOf(packed_val)) {
 /// Converts an integer to a packed struct or union of the same size
 pub fn fromInt(comptime T: type, int: Int(T)) T {
     return switch (@typeInfo(T)) {
-        .Enum => @enumFromInt(int),
-        .Struct, .Union => @bitCast(int),
+        .@"enum" => @enumFromInt(int),
+        .@"struct", .@"union" => @bitCast(int),
         else => unreachable,
     };
 }

@@ -204,7 +204,7 @@ fn testBreakAt(first: []const u8, second: []const u8) !void {
 
 fn expectTupleTypes(comptime T: type, comptime types: []const type) !void {
     comptime {
-        const info = @typeInfo(T).Struct;
+        const info = @typeInfo(T).@"struct";
         try testing.expect(info.is_tuple);
         var field_types: [info.fields.len]type = undefined;
         for (info.fields, &field_types) |f, *t| {
@@ -258,18 +258,14 @@ test splitAt {
     try testSplitAt(u16, L("abc"), '=', L("123"));
     try testSplitAt(u8, "", '=', "123");
     try testSplitAt(u8, "abc", '=', "");
-    try testSplitAt(u8,
-        "longer string",
-        0x87,
-        "not empty",
-    );
+    try testSplitAt(u8, "longer string", 0x87, "not empty");
     try testSplitAt(u8, "a", 'c', "bcdef");
 }
 
 test toSlice {
     const eql = testing.expectEqual;
     var buffer: [10:0]u8 align(16) = "0123456789".*;
-    const ptr: *align(16)[10:0]u8 = &buffer;
+    const ptr: *align(16) [10:0]u8 = &buffer;
     try eql(ptr, toSlice(@as([:0]u8, ptr)));
     try eql(ptr, toSlice(@as(*volatile [10]u8, ptr)));
     try eql(ptr, toSlice(@as([*:0]align(16) u8, ptr)));

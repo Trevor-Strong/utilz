@@ -1,12 +1,12 @@
 const std = @import("std");
-const utilz = @import("util.zig");
+const utilz = @import("utilz");
 const assert = std.debug.assert;
 
 pub fn Unsigned(comptime T: type) type {
     switch (@typeInfo(T)) {
-        .Int => |int_info| switch (int_info.signedness) {
+        .int => |int_info| switch (int_info.signedness) {
             .signed => @Type(.{
-                .Int = .{ .signedness = .unsigned, .bits = int_info.bits },
+                .int = .{ .signedness = .unsigned, .bits = int_info.bits },
             }),
             .unsigned => T,
         },
@@ -16,10 +16,10 @@ pub fn Unsigned(comptime T: type) type {
 
 pub fn Signed(comptime T: type) type {
     switch (@typeInfo(T)) {
-        .Int => |int_info| switch (int_info.signedness) {
+        .int => |int_info| switch (int_info.signedness) {
             .signed => T,
             .unsigned => @Type(.{
-                .Int = .{ .signedness = .signed, .bits = int_info.bits },
+                .int = .{ .signedness = .signed, .bits = int_info.bits },
             }),
         },
         else => @compileError("Sized integer type required, found '" ++ @typeName(T) ++ "'"),
@@ -30,7 +30,7 @@ pub inline fn SizedTypeOf(value: anytype) type {
     return switch (@TypeOf(value)) {
         comptime_int => std.math.IntFittingRange(value, value),
         else => |T| switch (@typeInfo(T)) {
-            .Int => T,
+            .int => T,
             else => @compileError("Expected integer type, found '" ++ @typeName(T) ++ "'"),
         },
     };

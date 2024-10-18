@@ -25,7 +25,7 @@ pub fn build(b: *Build) void {
 
     const root_source_file = b.path("src/utilz.zig");
 
-    const utilz = b.addModule("utilz", .{
+    const utilz = b.addModule("lib", .{
         .target = target,
         .optimize = optimize,
         .root_source_file = root_source_file,

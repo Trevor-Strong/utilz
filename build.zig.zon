@@ -1,6 +1,6 @@
 .{
     .name = "utilz",
-    .version = "0.2.2",
+    .version = "0.2.3",
     .min_zig_version = "0.14.0-dev.1939+816dfca0b",
     .dependencies = .{},
     .paths = .{

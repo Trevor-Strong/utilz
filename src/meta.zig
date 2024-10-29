@@ -2,6 +2,17 @@ const std = @import("std");
 const utilz = @import("utilz");
 const assert = std.debug.assert;
 
+pub fn isContainer(comptime T: type) bool {
+    return isContainerTag(@typeInfo(T));
+}
+
+pub inline fn isContainerTag(type_id: std.builtin.TypeId) bool {
+    return switch (type_id) {
+        .@"enum", .@"union", .@"struct", .@"opaque" => true,
+        else => false,
+    };
+}
+
 /// If `T` is a pointer, or optional pointer, returns the pointer child type,
 /// otherwise returns `T`
 pub fn Object(comptime T: type) type {
@@ -11,6 +22,22 @@ pub fn Object(comptime T: type) type {
             .pointer => |ptr_info| ptr_info.child,
             else => T,
         },
+        else => T,
+    };
+}
+
+pub fn SingleObject(comptime T: type) type {
+    const ptr_info = switch (@typeInfo(T)) {
+        .pointer => |ptr_info| ptr_info,
+        .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| ptr_info,
+            else => return T,
+        },
+        else => return T,
+    };
+
+    return switch (ptr_info.size) {
+        .One => ptr_info.child,
         else => T,
     };
 }
@@ -30,22 +57,14 @@ pub const TraitFn = @TypeOf(struct {
     }
 }.f);
 
-pub inline fn is(comptime tag: std.builtin.TypeId) TraitFn {
-    return struct {
-        inline fn f(comptime T: type) bool {
-            return @typeInfo(T) == tag;
-        }
-    }.f;
-}
-
 /// `true` if `T` is an integer type, including `comptime_int`
 pub inline fn isInt(comptime T: type) bool {
-    return T == comptime_int or @typeInfo(T) == .Int;
+    return T == comptime_int or @typeInfo(T) == .int;
 }
 
 /// `true` if `T` is an float type, including `comptime_float`
 pub inline fn isFloat(comptime T: type) bool {
-    return T == comptime_float or @typeInfo(T) == .Float;
+    return T == comptime_float or @typeInfo(T) == .float;
 }
 
 pub fn isComptimeOnly(comptime T: type) bool {
@@ -184,13 +203,68 @@ pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
     }
 }
 
+pub fn hasMethod(comptime T: type, comptime name: []const u8) bool {
+    const O = switch (@typeInfo(T)) {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .C, .One => if (isContainer(ptr_info.child)) ptr_info.child else return false,
+            .Slice, .Many => return false,
+        },
+        else => |ty_info| if (isContainerTag(ty_info)) T else return false,
+    };
+
+    if (!@hasDecl(O, name)) return false;
+    const Decl = @TypeOf(@field(O, name));
+
+    const fn_info = switch (@typeInfo(Decl)) {
+        .@"fn" => |fn_info| fn_info,
+        else => return false,
+    };
+
+    return fn_info.params.len > 0 and if (fn_info.params[0].type) |P| isReceiverFor(P, T) else true;
+}
+
+/// Determines if `ReceiverT` is a valid method receiver type for `T`.
+/// This function does not check that `T` is allowed to have methods, so
+/// something like `isReceiverFor(*[]u8, []u8)` is `true` because, generically,
+/// `*T` is a valid receiver type for `T`.
+///
+/// The valid receiver types for some type `T` are:
+/// - `T`
+/// - `*T` with any `align`, `const`, `volatile`, and `allowzero` attributes.
+/// - `[*c]T` with any `align`, `const` and `volatile` attributes.
+///
+/// Additionally, optional and error unions of the types listed above
+pub fn isReceiverFor(comptime ReceiverT: type, comptime T: type) bool {
+    return ReceiverT == T or switch (@typeInfo(ReceiverT)) {
+        .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
+            .One, .C => true,
+            .Slice, .Many => false,
+        },
+        .optional => |opt_info| opt_info.child == T or switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
+                .One, .C => true,
+                .Slice, .Many => false,
+            },
+            else => false,
+        },
+        .error_union => |eu_info| eu_info.payload == T or switch (@typeInfo(eu_info.payload)) {
+            .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
+                .C, .One => true,
+                .Slice, .Many => false,
+            },
+            else => false,
+        },
+        else => false,
+    };
+}
+
 /// Returns `true` if `Fn` would be callable as a method of `Self`; otherwise
 /// returns `false`. If the first parameter of `Fn` is generic, this function
 /// always returns `false`
 pub fn isMethod(comptime Self: type, comptime Fn: type) bool {
     const fn_info = @typeInfo(Fn);
     if (fn_info != .@"fn") return false;
-    return isMethodInfo(Self, fn_info.Fn);
+    return isMethodInfo(Self, fn_info.@"fn");
 }
 
 pub fn isMethodInfo(

@@ -1,10 +1,16 @@
 const std = @import("std");
-
+const builtin = @import("builtin");
 const Build = std.Build;
 
 pub fn build(b: *Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    const target = targetOption(b, .{});
+    const optimize = optimizeOption(b, .{
+        .default_release_mode = .ReleaseSafe,
+    });
+    const single_threaded = b.option(bool, "single_threaded", "Build in single threaded mode");
+    const strip = b.option(bool, "strip", "Strip (or don't strip) debug information");
+    const omit_frame_pointer = b.option(bool, "omit_frame_pointer", "Omit saving the frame pointer");
+
     const test_filter: []const []const u8 = b.option(
         []const []const u8,
         "test-filter",
@@ -17,101 +23,134 @@ pub fn build(b: *Build) void {
         "Check the formatting of files instead of fixing it",
     ) orelse false;
 
-    // Create module and a corresponding test step.
-
-    _ = addModuleAndTest(b, .{
-        .name = "utilz",
-        .import_self = .yes,
-        .test_filters = test_filter,
-        .module = .{
-            .root_source_file = b.path("src/utilz.zig"),
-            .target = target,
-            .optimize = optimize,
-        },
+    const utilz = b.addModule("utilz", .{
+        .root_source_file = b.path("src/utilz.zig"),
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = single_threaded,
+        .strip = strip,
+        .omit_frame_pointer = omit_frame_pointer,
     });
+    utilz.addImport("utilz", utilz);
+
+    // Create Tests
+
+    const unit_tests = b.addTest(.{
+        .root_module = utilz,
+        .filters = test_filter,
+    });
+    const run_tests = b.addRunArtifact(unit_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_tests.step);
 
     // Formatting step
 
-    addFmtStep(b, "fmt", .{
-        .fmt = .{
-            .check = check_fmt,
-            .paths = &.{
-                "src",
-                "build.zig",
-                "build.zig.zon",
-                "build_util.zig",
-            },
+    const fmt = b.addFmt(.{
+        .check = check_fmt,
+        .paths = &.{
+            "src",
+            "build.zig",
+            "build.zig.zon",
         },
     });
-}
 
-pub fn importSelf(module: *Build.Module, name: []const u8) void {
-    module.addImport(name, module);
-}
-
-pub const ModuleAndTestOptions = struct {
-    /// Name to expose the module as or null to create an anonymous module
-    name: ?[]const u8 = null,
-    import_self: union(enum) {
-        no,
-        yes,
-        as: []const u8,
-    } = .no,
-    /// Module creation options
-    module: Build.Module.CreateOptions = .{},
-    /// Test filters
-    test_filters: []const []const u8 = &.{},
-    /// Name of the test step
-    test_step_name: []const u8 = "test",
-};
-
-pub fn addModuleAndTest(
-    b: *Build,
-    options: ModuleAndTestOptions,
-) *Build.Module {
-    var mod: *Build.Module = undefined;
-    if (options.name) |name| {
-        mod = b.addModule(name, options.module);
-    } else {
-        mod = b.createModule(options.module);
-    }
-
-    const test_step = Build.Step.Compile.create(b, .{
-        .filters = options.test_filters,
-        .kind = .@"test",
-        .name = "test",
-        .root_module = options.module,
-    });
-
-    switch (options.import_self) {
-        .no => {},
-        .yes, .as => {
-            const name = switch (options.import_self) {
-                .no => unreachable,
-                .yes => options.name.?,
-                .as => |name| name,
-            };
-            importSelf(mod, name);
-            importSelf(&test_step.root_module, name);
-        },
-    }
-
-    const run_test_step = b.addRunArtifact(test_step);
-
-    const test_top_level_step = b.step(options.test_step_name, "Run unit tests");
-    test_top_level_step.dependOn(&run_test_step.step);
-    return mod;
-}
-
-pub const AddFmtStepOptions = struct {
-    description: []const u8 = "Format project source files",
-    fmt: Build.Step.Fmt.Options = .{},
-};
-
-pub fn addFmtStep(b: *Build, name: []const u8, options: AddFmtStepOptions) void {
-    const fmt = b.addFmt(options.fmt);
-    const fmt_step = b.step(name, options.description);
+    const fmt_step = b.step("fmt", "Format source files");
     fmt_step.dependOn(&fmt.step);
+}
+
+pub const TargetOptionConfig = struct {
+    default: ?std.Target.Query = .{},
+    whitelist: []const std.Target.Query = &.{},
+};
+
+pub fn targetOption(b: *Build, config: TargetOptionConfig) ?Build.ResolvedTarget {
+    const query = parseTargetQuery(b, config) orelse return null;
+    return b.resolveTargetQuery(query);
+}
+
+fn parseTargetQuery(b: *Build, config: TargetOptionConfig) ?std.Target.Query {
+    const maybe_triple = b.option(
+        []const u8,
+        "target",
+        "The CPU architecture, OS, and ABI to build for",
+    );
+    const mcpu = b.option(
+        []const u8,
+        "cpu",
+        "Target CPU features to add or subtract",
+    );
+    const dynamic_linker = b.option(
+        []const u8,
+        "dynamic-linker",
+        "Path to interpreter on the target system",
+    );
+
+    if (maybe_triple == null and mcpu == null and dynamic_linker == null)
+        return config.default;
+
+    const triple = maybe_triple orelse "native";
+
+    const target = Build.parseTargetQuery(.{
+        .arch_os_abi = triple,
+        .cpu_features = mcpu,
+        .dynamic_linker = dynamic_linker,
+    }) catch |err| switch (err) {
+        error.ParseFailed => {
+            b.invalid_user_input = true;
+            return config.default;
+        },
+    };
+
+    for (config.whitelist) |q| {
+        if (q.eql(target)) return target;
+    }
+
+    for (config.whitelist) |q| {
+        std.log.info("Allowed target: -Dtarget={} -Dcpu={cpu}", .{
+            fmtTargetQuery(q),
+            fmtTargetQuery(q),
+        });
+    }
+
+    std.log.err("Chosen target '{}' does not match any of the allowed targets.", .{
+        fmtTargetQuery(target),
+    });
+    b.invalid_user_input = true;
+    return config.default;
+}
+
+pub const OptimizeOptionConfig = struct {
+    /// Optimization level when `release_mode` is `.auto` and `-Doptimize`
+    /// is not set.
+    default_release_mode: ?std.builtin.OptimizeMode = null,
+};
+pub fn optimizeOption(
+    b: *Build,
+    config: OptimizeOptionConfig,
+) ?std.builtin.OptimizeMode {
+    const optimize = b.option(
+        std.builtin.OptimizeMode,
+        "optimize",
+        "Optimization mode to build with. Prioritize safety, speed, or binary size",
+    );
+    var is_release = false;
+    if (config.default_release_mode != null) {
+        is_release = b.option(bool, "release", "Build in the default release mode") orelse false;
+    }
+
+    if (optimize) |mode| return mode;
+
+    if (is_release) {
+        return config.default_release_mode.?;
+    }
+
+    return switch (b.release_mode) {
+        .off => null,
+        .any => config.default_release_mode orelse @panic("No default release mode"),
+        .safe => .ReleaseSafe,
+        .fast => .ReleaseFast,
+        .small => .ReleaseSmall,
+    };
 }
 
 pub fn lazyDep(b: *Build, dep_name: []const u8, dep_options: anytype) LazyDependency {
@@ -149,159 +188,113 @@ pub const LazyDependency = struct {
     }
 };
 
-const BuildVersionOptions = struct {
-    /// Override for the `build.zig.zon` file object
-    build_zig_zon: ?std.fs.File = null,
-    /// The 'pre-release' part of the version.
-    ///
-    /// Set to `null` to indicate a full release version.
-    pre_release: ?[]const u8 = null,
-    /// Whether or not to include the build hash in the version.
-    ///
-    /// When `null`, the build hash is included unless`pre_release` is `null`.
-    include_build_hash: ?bool = null,
-    /// Should pre-release/build information in the build.zig.zon be ignored?
-    ignore_zon_pre_and_build: bool = false,
-    /// Should we error if the build.zig.zon file has non-null pre-release or
-    /// build fields?
-    allow_zon_pre_and_build: bool = true,
-    /// Directories to search for the git executable, beyond the PATH
-    /// environment variable.
-    git_search_dirs: []const []const u8 = &.{},
-};
+pub fn fmtTarget(target: std.Target) std.fmt.Formatter(formatTargetQuery) {
+    return fmtTargetQuery(std.Target.Query.fromTarget(target));
+}
 
-pub fn getBuildVersion(
-    b: *const Build,
-    options: BuildVersionOptions,
-) !std.SemanticVersion {
-    const gpa = b.owner.graph.arena;
+pub fn fmtTargetQuery(query: std.Target.Query) std.fmt.Formatter(formatTargetQuery) {
+    return .{ .data = query };
+}
 
-    const max_retries = 3;
-    const file = options.build_zig_zon orelse for (0..max_retries) |_| {
-        break b.build_root.handle.openFile(
-            "build.zig.zon",
-            .{ .mode = .read_only },
-        ) catch |err| switch (err) {
-            error.FileLocksNotSupported => unreachable,
-            error.PathAlreadyExists => unreachable,
-            error.InvalidUtf8 => unreachable,
-            error.InvalidWtf8 => unreachable,
-            error.AntivirusInterference => continue,
-            else => |e| return e,
-        };
-    } else return error.AntivirusInterference;
-    defer file.close();
-    var version = try getZonVersion(gpa, file);
-    if (!options.allow_zon_pre_and_build) {
-        if (version.pre != null or version.build != null) {
-            return error.NonNumericBuildZigZonVersion;
+pub fn formatTargetQuery(
+    query: std.Target.Query,
+    comptime fmt: []const u8,
+    options: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    _ = options;
+    if (fmt.len == 0) {
+        if (query.isNativeTriple()) return writer.writeAll("native");
+        const arch = if (query.cpu_arch) |arch| @tagName(arch) else "native";
+        const os = if (query.os_tag) |os| @tagName(os) else "native";
+
+        try writer.print("{s}-{s}", .{ arch, os });
+
+        if (query.os_version_min) |min| {
+            if (min != .none) {
+                try writer.writeAll(".");
+                try formatOsVersion(min, writer);
+            }
         }
-    }
-
-    const has_pre = options.pre_release != null;
-    const include_hash = options.include_build_hash orelse has_pre;
-
-    if (!options.ignore_zon_pre_and_build) {
-        if (has_pre and version.pre != null and !std.mem.eql(u8, options.pre_release.?, version.pre.?)) {
-            std.debug.panic(
-                "Pre-release type in package config file of '{'}' does not match requested pre-release type '{'}'",
-                .{
-                    std.zig.fmtEscapes(version.pre.?),
-                    std.zig.fmtEscapes(options.pre_release.?),
-                },
-            );
-        }
-    } else {
-        if (options.pre_release) |pre_release| {
-            if (version.pre) |buf| {
-                var bytes: std.ArrayList(u8) = .fromOwnedSlice(gpa, buf);
-                bytes.clearRetainingCapacity();
-                try bytes.ensureTotalCapacityPrecise(pre_release.len);
-                errdefer bytes.deinit();
-                bytes.appendSliceAssumeCapacity(pre_release);
-                // may fail if buf.len > pre_release.len and shrinking fails
-                version.pre = try bytes.toOwnedSlice();
-            } else {
-                version.pre = try gpa.dupe(u8, pre_release);
+        if (query.os_version_max) |max| {
+            if (max != .none) {
+                try writer.writeAll("...");
+                try formatOsVersion(max, writer);
             }
         }
 
-        if (include_hash) {
-            if (options.ignore_zon_pre_and_build or !version.build == null) {
-                const git_exe_path = b.findProgram(&.{"git"}, options.git_search_dirs) catch return error.GitNotFound;
-                const build_hash = b.run(&.{
-                    git_exe_path,
-                    "-C",
-                    b.pathFromRoot("."),
-                    "rev-parse",
-                    "--short",
-                    "HEAD",
-                });
-                if (version.build) |buf| {
-                    gpa.free(buf);
+        if (query.glibc_version) |v| {
+            const abi = if (query.abi) |abi| @tagName(abi) else "gnu";
+            try writer.print("-{s}.", .{abi});
+            try formatSemver(v, writer);
+        } else if (query.android_api_level) |lvl| {
+            const abi = if (query.abi) |abi| @tagName(abi) else "android";
+            try writer.print("-{s}.{d}", .{ abi, lvl });
+        } else if (query.abi) |abi| {
+            try writer.print("-{s}", .{@tagName(abi)});
+        }
+    } else if (comptime std.mem.eql(u8, fmt, "cpu")) {
+        switch (query.cpu_model) {
+            .native => {
+                try writer.writeAll("native");
+            },
+            .baseline => {
+                try writer.writeAll("baseline");
+            },
+            .determined_by_arch_os => {
+                if (query.cpu_arch == null) {
+                    try writer.writeAll("native");
+                } else {
+                    try writer.writeAll("baseline");
                 }
-                version.build = build_hash;
+            },
+            .explicit => |model| {
+                try writer.writeAll(model.name);
+            },
+        }
+
+        if (query.cpu_features_add.isEmpty() and query.cpu_features_sub.isEmpty()) {
+            // The CPU name alone is sufficient.
+            return;
+        }
+
+        const cpu_arch = query.cpu_arch orelse builtin.cpu.arch;
+        const all_features = cpu_arch.allFeaturesList();
+
+        for (all_features, 0..) |feature, i_usize| {
+            const i: std.Target.Cpu.Feature.Set.Index = @intCast(i_usize);
+
+            if (query.cpu_features_sub.isEnabled(i)) {
+                try writer.writeAll("-");
+            } else if (query.cpu_features_add.isEnabled(i)) {
+                try writer.writeAll("+");
             } else {
-                std.debug.assert(version.build != null);
+                continue;
             }
+            try writer.writeAll(feature.name);
         }
     }
 }
 
-/// Get the version present in the `build.zig.zon` file, `file`
-fn getZonVersion(
-    gpa: std.mem.Allocator,
-    file: std.fs.File,
-) !std.SemanticVersion {
-    const source = try std.zig.readSourceFileToEndAlloc(gpa, file, null);
-    defer gpa.free(source);
+fn formatSemver(semver: std.SemanticVersion, writer: anytype) !void {
+    try writer.print("{d}.{d}", .{ semver.major, semver.minor });
+    if (semver.patch != 0) {
+        try writer.print(".{d}", .{semver.patch});
+    }
+}
 
-    var tokenizer = std.zig.Tokenizer.init(source);
-    // brace depth
-    var depth: u32 = 0;
-    while (true) {
-        var tok = tokenizer.next();
-        switch (tok.tag) {
-            .eof => break,
-            .invalid, .invalid_periodasterisks => return error.InvalidZon,
-            .l_brace => depth += 1,
-            .period => {
-                tok = tokenizer.next();
-                switch (tok.tag) {
-                    .eof => break,
-                    .l_brace => depth += 1,
-                    .r_brace => depth -= 1,
-                    .identifier => {},
-                    else => continue,
-                }
-            },
-            else => continue,
-        }
-        if (depth != 1) continue;
-        const ident = source[tok.loc.start..tok.loc.end];
-        if (!std.mem.eql(u8, ident, "version")) continue;
-        tok = tokenizer.next();
-        switch (tok.tag) {
-            .equal => {},
-            .eof => break,
-            else => continue,
-        }
-        tok = tokenizer.next();
-        switch (tok.tag) {
-            .string_literal => {},
-            .eof => break,
-            else => continue,
-        }
-        const version_string = source[tok.loc.start..tok.loc.end];
-        var semver = try std.SemanticVersion.parse(version_string);
-        if (semver.build) |build_str| {
-            semver.build = gpa.dupe(u8, build_str);
-        }
-
-        if (semver.pre) |pre_str| {
-            semver.pre = gpa.dup(u8, pre_str);
-        }
-
-        return semver;
+fn formatOsVersion(osv: std.Target.Query.OsVersion, writer: anytype) !void {
+    switch (osv) {
+        .none => {},
+        .semver => |v| {
+            try formatSemver(v, writer);
+        },
+        .windows => |v| {
+            if (std.enums.tagName(std.Target.Os.WindowsVersion, v)) |name| {
+                try writer.writeAll(name);
+            } else {
+                try std.fmt.formatInt(@intFromEnum(v), 10, .lower, .{}, writer);
+            }
+        },
     }
 }

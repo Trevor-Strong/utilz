@@ -17,7 +17,7 @@ pub inline fn isPacked(comptime T: type) bool {
         // Pointers are just a `usize` in memory, and so can be packed.
         // 'Slice' pointers are special because they carry a 'len' with them
         // and so are not represented in memory the same way
-        .pointer => |ptr_info| ptr_info.size != .Slice,
+        .pointer => |ptr_info| ptr_info.size != .slice,
         // Zig pointers are not nullable by default (address 0 isn't allowed),
         // meaning that optional pointers just use address 0 as the null value
         // and keep the same memory representation (aside from the some
@@ -25,13 +25,13 @@ pub inline fn isPacked(comptime T: type) bool {
         .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
             .pointer => |ptr_info| switch (ptr_info.size) {
                 // Slices are never packable
-                .Slice => false,
+                .slice => false,
                 // C pointers are nullable by default, so an optional C pointer
                 // requires more storage for the optional bit
-                .C => false,
+                .c => false,
                 // Same as with C pointers, but only applying when the pointer
                 // is 'allowzero'
-                .One, .Many => !ptr_info.is_allowzero,
+                .one, .many => !ptr_info.is_allowzero,
             },
             // All other optional types are not packable
             else => false,

@@ -50,7 +50,7 @@ pub fn splitAt(slice: anytype, index: usize) Break(@TypeOf(slice)) {
 /// Takes a slice type `T` and returns a tuple of
 pub fn Break(comptime T: type) type {
     const slice: utilz.slice.Slice = utilz.slice.forType(T) catch {
-        @compileError(utilz.expected("a slice or pointer to array type, ").foundType(T));
+        @compileError("Expected a slice or pointer to array type, found '" ++ @typeName(T) ++ "'");
     };
     const first_half = slice.withoutSentinel();
     const second_half = slice;

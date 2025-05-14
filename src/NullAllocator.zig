@@ -10,7 +10,7 @@ pub fn allocator(self: NullAllocator) std.mem.Allocator {
     };
 }
 
-fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
     _ = ctx;
     _ = len;
     _ = ptr_align;
@@ -22,4 +22,5 @@ pub const vtable = std.mem.Allocator.VTable{
     .alloc = alloc,
     .resize = std.mem.Allocator.noResize,
     .free = std.mem.Allocator.noFree,
+    .remap = std.mem.Allocator.noRemap,
 };

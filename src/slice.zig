@@ -44,17 +44,17 @@ pub const Slice = struct {
         };
 
         switch (ptr_info.size) {
-            .Slice => {
+            .slice => {
                 slice.len = null;
                 slice.child = ptr_info.child;
-                slice.sentinel = ptr_info.sentinel;
+                slice.sentinel = ptr_info.sentinel_ptr;
                 slice.conv = .{};
             },
-            .One => switch (@typeInfo(ptr_info.child)) {
+            .one => switch (@typeInfo(ptr_info.child)) {
                 .array => |arr_info| {
                     slice.len = arr_info.len;
                     slice.child = arr_info.child;
-                    slice.sentinel = arr_info.sentinel;
+                    slice.sentinel = arr_info.sentinel_ptr;
                     slice.conv = .{};
                 },
                 .vector => |vec_info| {
@@ -69,17 +69,17 @@ pub const Slice = struct {
                 },
                 else => return error.NotSliceConvertible,
             },
-            .Many => if (ptr_info.sentinel) |sentinel| {
+            .many => if (ptr_info.sentinel_ptr) |sentinel| {
                 slice.len = null;
                 slice.child = ptr_info.child;
                 slice.sentinel = sentinel;
                 slice.conv = .{ .slice_to = true };
             },
-            .C => switch (@typeInfo(ptr_info.child)) {
+            .c => switch (@typeInfo(ptr_info.child)) {
                 .array => |arr_info| {
                     slice.len = arr_info.len;
                     slice.child = arr_info.child;
-                    slice.sentinel = arr_info.sentinel;
+                    slice.sentinel = arr_info.sentinel_ptr;
                     slice.conv = .{ .is_c = true };
                 },
                 .vector => |vec_info| {
@@ -152,9 +152,9 @@ pub const Slice = struct {
         const len = slice.len orelse @compileError("Length not statically known");
         return @Type(.{
             .pointer = .{
-                .size = .One,
+                .size = .one,
                 .child = if (slice.getSentinel()) |sentinel| [len:sentinel]slice.child else [len]slice.child,
-                .sentinel = null,
+                .sentinel_ptr = null,
                 .alignment = slice.alignment,
                 .address_space = slice.addr_space,
                 .is_const = slice.is_const,
@@ -173,10 +173,10 @@ pub const Slice = struct {
         return .{
             .pointer = .{
                 .child = slice.child,
-                .size = .Slice,
+                .size = .slice,
                 .alignment = slice.alignment,
                 .address_space = slice.addr_space,
-                .sentinel = slice.sentinel,
+                .sentinel_ptr = slice.sentinel,
                 .is_const = slice.is_const,
                 .is_volatile = slice.is_volatile,
                 .is_allowzero = slice.is_allowzero,
@@ -192,7 +192,7 @@ pub const Slice = struct {
         var ptr_info = PtrInfo{
             .child = undefined,
             .size = undefined,
-            .sentinel = undefined,
+            .sentinel_ptr = undefined,
             .alignment = slice.alignment,
             .address_space = slice.addr_space,
             .is_const = slice.is_const,
@@ -202,19 +202,19 @@ pub const Slice = struct {
 
         if (slice.conv.isDirect()) {
             if (slice.len) |arr_len| {
-                ptr_info.size = .One;
+                ptr_info.size = .one;
                 ptr_info.child = @Type(.{
                     .array = .{
                         .child = slice.child,
                         .len = arr_len,
-                        .sentinel = slice.sentinel,
+                        .sentinel_ptr = slice.sentinel,
                     },
                 });
-                ptr_info.sentinel = null;
+                ptr_info.sentinel_ptr = null;
             } else {
-                ptr_info.size = .Slice;
+                ptr_info.size = .slice;
                 ptr_info.child = slice.child;
-                ptr_info.sentinel = slice.sentinel;
+                ptr_info.sentinel_ptr = slice.sentinel;
             }
         } else if (slice.conv.vec_to_arr) {
             ptr_info.child = @Type(.{
@@ -223,31 +223,31 @@ pub const Slice = struct {
                     .len = slice.len.?,
                 },
             });
-            ptr_info.size = if (slice.conv.is_c) .C else .One;
-            ptr_info.sentinel = null;
+            ptr_info.size = if (slice.conv.is_c) .c else .one;
+            ptr_info.sentinel_ptr = null;
             assert(slice.sentinel == null);
         } else if (slice.conv.slice_to) {
             ptr_info.child = slice.child;
             if (slice.conv.is_c) {
                 assert(slice.sentinel == null); // sentinel is assumed to be 0
-                ptr_info.size = .C;
-                ptr_info.sentinel = null;
+                ptr_info.size = .c;
+                ptr_info.sentinel_ptr = null;
             } else {
                 assert(slice.sentinel != null);
-                ptr_info.size = .Many;
-                ptr_info.sentinel = slice.sentinel;
+                ptr_info.size = .many;
+                ptr_info.sentinel_ptr = slice.sentinel;
             }
         } else { // C pointer to array
             assert(slice.conv == .{ .is_c = true });
-            ptr_info.size = .C;
+            ptr_info.size = .c;
             ptr_info.child = @Type(.{
                 .array = .{
                     .len = slice.len.?,
                     .child = slice.child,
-                    .sentinel = slice.sentinel,
+                    .sentinel_ptr = slice.sentinel,
                 },
             });
-            ptr_info.sentinel = null;
+            ptr_info.sentinel_ptr = null;
         }
         return .{ .pointer = ptr_info };
     }
@@ -346,8 +346,9 @@ pub fn Elem(comptime T: type) type {
 
 /// Coerces `T` to a slice type.
 ///
-/// `T` must be coercible to a slice type via `@as`
-/// (i.e. `forType(T) != null and forType(T).conv.isDirect()` is `true).
+/// `T` must be coercible to a slice type via `@as` cast (i.e. `forType(T)`
+/// doesn't error and `conv.isDirect()` is `true` for the resulting `Slice`
+/// object).
 pub fn AsSlice(comptime T: type) type {
     if (forType(T)) |info| {
         if (info.conv.isDirect()) {

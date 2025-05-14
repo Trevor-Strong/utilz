@@ -37,7 +37,7 @@ pub fn SingleObject(comptime T: type) type {
     };
 
     return switch (ptr_info.size) {
-        .One => ptr_info.child,
+        .one => ptr_info.child,
         else => T,
     };
 }
@@ -49,13 +49,6 @@ pub fn Required(comptime T: type) type {
         else => T,
     };
 }
-
-pub const TraitFn = @TypeOf(struct {
-    inline fn f(comptime T: type) bool {
-        _ = T;
-        return false;
-    }
-}.f);
 
 /// `true` if `T` is an integer type, including `comptime_int`
 pub inline fn isInt(comptime T: type) bool {
@@ -154,7 +147,7 @@ pub fn isNoReturnLikeInfo(comptime type_info: std.builtin.Type) bool {
         .noreturn, .@"opaque" => return true,
         .@"enum" => |enum_info| return enum_info.is_exhaustive and enum_info.fields.len == 0,
         .@"union" => |union_info| return union_info.fields.len == 0,
-        .ErrorSet => |errors| return errors != null and errors.?.len == 0,
+        .error_set => |errors| return errors != null and errors.?.len == 0,
         .array => |arr_info| return isNoReturnLike(arr_info.child),
         .vector => |vec_info| return isNoReturnLike(vec_info.child),
         .@"struct" => |struct_info| {
@@ -237,20 +230,20 @@ pub fn hasMethod(comptime T: type, comptime name: []const u8) bool {
 pub fn isReceiverFor(comptime ReceiverT: type, comptime T: type) bool {
     return ReceiverT == T or switch (@typeInfo(ReceiverT)) {
         .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
-            .One, .C => true,
-            .Slice, .Many => false,
+            .one, .c => true,
+            .slice, .many => false,
         },
         .optional => |opt_info| opt_info.child == T or switch (@typeInfo(opt_info.child)) {
             .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
-                .One, .C => true,
-                .Slice, .Many => false,
+                .one, .c => true,
+                .slice, .many => false,
             },
             else => false,
         },
         .error_union => |eu_info| eu_info.payload == T or switch (@typeInfo(eu_info.payload)) {
             .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
-                .C, .One => true,
-                .Slice, .Many => false,
+                .c, .one => true,
+                .slice, .many => false,
             },
             else => false,
         },
@@ -276,22 +269,22 @@ pub fn isMethodInfo(
     if (T == Self) return true;
     const ptr_info = switch (@typeInfo(T)) {
         .pointer => |ptr_info| return switch (ptr_info.size) {
-            .C, .One => ptr_info.child == Self,
-            .Many, .Slice => false,
+            .c, .one => ptr_info.child == Self,
+            .many, .slice => false,
         },
         .optional => |opt_info| opt_info.child == Self or switch (@typeInfo(opt_info.child)) {
             .pointer => |ptr_info| switch (ptr_info.size) {
-                .One => ptr_info.child == Self,
-                .C => false, // optional `C` pointers don't count
-                .Many, .Slice => false,
+                .one => ptr_info.child == Self,
+                .c => false, // optional `C` pointers don't count
+                .many, .slice => false,
             },
         },
         .error_union => |eu_info| return eu_info.payload == Self,
         else => return false,
     };
     switch (ptr_info.size) {
-        .C, .One => {},
-        .Many, .Slice => return false,
+        .c, .one => {},
+        .many, .slice => return false,
     }
     return ptr_info.child == Self;
 }
@@ -305,8 +298,8 @@ pub fn isThinPtrEx(comptime T: type, comptime options: PointerOptions) bool {
         .pointer => |ptr_info| ptr_info.size != .Slice,
         .optional => |opt_info| options.allow_optional and switch (@typeInfo(opt_info.child)) {
             .pointer => |ptr_info| !ptr_info.is_allowzero and switch (ptr_info.size) {
-                .One, .Many => true,
-                .C, .Slice => false,
+                .one, .many => true,
+                .c, .slice => false,
             },
             else => false,
         },

@@ -2,6 +2,16 @@ const std = @import("std");
 const utilz = @import("utilz");
 const assert = std.debug.assert;
 
+pub const ptr = @import("meta/ptr.zig");
+
+pub fn UInt(comptime bits: u16) type {
+    return std.meta.Int(.unsigned, bits);
+}
+
+pub fn SInt(comptime bits: u16) type {
+    return std.meta.Int(.signed, bits);
+}
+
 pub fn isContainer(comptime T: type) bool {
     return isContainerTag(@typeInfo(T));
 }
@@ -48,6 +58,82 @@ pub fn Required(comptime T: type) type {
         .optional => |opt_info| opt_info.child,
         else => T,
     };
+}
+
+pub inline fn hasPadding(comptime T: type) bool {
+    switch (@typeInfo(T)) {
+        .int, .float => return @sizeOf(T) * 8 != @bitSizeOf(T),
+        .@"enum" => |enum_info| return hasPadding(enum_info.tag_type),
+        .array => |array_info| return (array_info.len > 0 or
+            array_info.sentinel_ptr != null) and hasPadding(array_info.child),
+        .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| return ptr_info.is_allowzero or
+                ptr_info.size == .c,
+            else => return true,
+        },
+        .@"struct" => |struct_info| {
+            if (struct_info.layout == .@"packed") return false;
+            const size = @sizeOf(T);
+            var bitsize = 0;
+            for (struct_info.fields) |f| {
+                if (!f.is_comptime) {
+                    if (hasPadding(f.type)) return true;
+                    bitsize += @bitSizeOf(f.type);
+                }
+            }
+            return size * 8 != bitsize;
+        },
+        .@"union" => |union_info| switch (union_info.layout) {
+            .auto, .@"extern" => {
+                var max_size = 0;
+                var max_align = 0;
+
+                var max_has_padding = true;
+                for (union_info.fields) |f| {
+                    const size = @sizeOf(f.type);
+                    const alignment = @alignOf(f.type);
+                    max_align = @max(max_align, alignment);
+                    if (max_size == size and max_has_padding) {
+                        max_has_padding = hasPadding(f.type);
+                    } else if (max_size < size) {
+                        max_size = size;
+                        max_has_padding = hasPadding(f.type);
+                    }
+                }
+                if (max_has_padding) return true;
+                if (!std.mem.isAligned(max_size, max_align)) return true;
+                if (max_align < @alignOf(T)) return true;
+
+                if (union_info.tag_type) |Tag| {
+                    if (!std.mem.isAligned(@sizeOf(Tag), max_align))
+                        return true;
+                    if (!std.mem.isAligned(@sizeOf(Tag) + max_size, max_align))
+                        return true;
+                    if (@sizeOf(Tag) + max_size != @sizeOf(T)) return true;
+                }
+            },
+            .@"packed" => return false,
+        },
+        .bool,
+        .null,
+        .type,
+        .void,
+        .@"fn",
+        .vector,
+        .pointer,
+        .noreturn,
+        .error_set,
+        .@"opaque",
+        .undefined,
+        .comptime_int,
+        .enum_literal,
+        .comptime_float,
+        => return false,
+        .frame,
+        .error_union,
+        .@"anyframe",
+        => return true,
+    }
 }
 
 /// `true` if `T` is an integer type, including `comptime_int`
@@ -102,7 +188,8 @@ pub fn isMultiValueZstInfo(comptime type_info: std.builtin.Type) bool {
         .comptime_float,
         .enum_literal,
         => true,
-        inline .vector, .array => |info| info.len == 0 or isMultiValueZst(info.child),
+        inline .vector, .array => |info| info.len == 0 or
+            isMultiValueZst(info.child),
         .@"struct" => |s_info| for (s_info.fields) |f| {
             if (!f.is_comptime and isMultiValueZst(f.type)) break true;
         } else false,
@@ -145,7 +232,8 @@ pub fn isNoReturnLike(comptime T: type) bool {
 pub fn isNoReturnLikeInfo(comptime type_info: std.builtin.Type) bool {
     switch (type_info) {
         .noreturn, .@"opaque" => return true,
-        .@"enum" => |enum_info| return enum_info.is_exhaustive and enum_info.fields.len == 0,
+        .@"enum" => |enum_info| return enum_info.is_exhaustive and
+            enum_info.fields.len == 0,
         .@"union" => |union_info| return union_info.fields.len == 0,
         .error_set => |errors| return errors != null and errors.?.len == 0,
         .array => |arr_info| return isNoReturnLike(arr_info.child),
@@ -173,8 +261,10 @@ pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
         .enum_literal,
         => return true,
         .int, .float => |num_info| return num_info.bits == 0,
-        .vector => |vec_info| return vec_info.len == 0 or @sizeOf(vec_info.child) == 0,
-        .array => |arr_info| return @sizeOf(arr_info.child) == 0 or (arr_info.len == 0 and arr_info.sentinel == null),
+        .vector => |vec_info| return vec_info.len == 0 or
+            @sizeOf(vec_info.child) == 0,
+        .array => |arr_info| return @sizeOf(arr_info.child) == 0 or
+            (arr_info.len == 0 and arr_info.sentinel == null),
         .@"enum" => |enum_info| return @sizeOf(enum_info.tag_type) == 0,
         .@"union" => |union_info| {
             if (union_info.tag_type) |Tag| {
@@ -194,132 +284,4 @@ pub fn isZstInfo(comptime type_info: std.builtin.Type) bool {
         .optional => |opt_info| return @sizeOf(?opt_info.child) == 0,
         else => return false,
     }
-}
-
-pub fn hasMethod(comptime T: type, comptime name: []const u8) bool {
-    const O = switch (@typeInfo(T)) {
-        .pointer => |ptr_info| switch (ptr_info.size) {
-            .C, .One => if (isContainer(ptr_info.child)) ptr_info.child else return false,
-            .Slice, .Many => return false,
-        },
-        else => |ty_info| if (isContainerTag(ty_info)) T else return false,
-    };
-
-    if (!@hasDecl(O, name)) return false;
-    const Decl = @TypeOf(@field(O, name));
-
-    const fn_info = switch (@typeInfo(Decl)) {
-        .@"fn" => |fn_info| fn_info,
-        else => return false,
-    };
-
-    return fn_info.params.len > 0 and if (fn_info.params[0].type) |P| isReceiverFor(P, T) else true;
-}
-
-/// Determines if `ReceiverT` is a valid method receiver type for `T`.
-/// This function does not check that `T` is allowed to have methods, so
-/// something like `isReceiverFor(*[]u8, []u8)` is `true` because, generically,
-/// `*T` is a valid receiver type for `T`.
-///
-/// The valid receiver types for some type `T` are:
-/// - `T`
-/// - `*T` with any `align`, `const`, `volatile`, and `allowzero` attributes.
-/// - `[*c]T` with any `align`, `const` and `volatile` attributes.
-///
-/// Additionally, optional and error unions of the types listed above
-pub fn isReceiverFor(comptime ReceiverT: type, comptime T: type) bool {
-    return ReceiverT == T or switch (@typeInfo(ReceiverT)) {
-        .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
-            .one, .c => true,
-            .slice, .many => false,
-        },
-        .optional => |opt_info| opt_info.child == T or switch (@typeInfo(opt_info.child)) {
-            .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
-                .one, .c => true,
-                .slice, .many => false,
-            },
-            else => false,
-        },
-        .error_union => |eu_info| eu_info.payload == T or switch (@typeInfo(eu_info.payload)) {
-            .pointer => |ptr_info| ptr_info.child == T and switch (ptr_info.size) {
-                .c, .one => true,
-                .slice, .many => false,
-            },
-            else => false,
-        },
-        else => false,
-    };
-}
-
-/// Returns `true` if `Fn` would be callable as a method of `Self`; otherwise
-/// returns `false`. If the first parameter of `Fn` is generic, this function
-/// always returns `false`
-pub fn isMethod(comptime Self: type, comptime Fn: type) bool {
-    const fn_info = @typeInfo(Fn);
-    if (fn_info != .@"fn") return false;
-    return isMethodInfo(Self, fn_info.@"fn");
-}
-
-pub fn isMethodInfo(
-    comptime Self: type,
-    comptime fn_info: std.builtin.Type.Fn,
-) bool {
-    if (fn_info.params.len == 0) return false;
-    const T = fn_info.params[0].type orelse return false;
-    if (T == Self) return true;
-    const ptr_info = switch (@typeInfo(T)) {
-        .pointer => |ptr_info| return switch (ptr_info.size) {
-            .c, .one => ptr_info.child == Self,
-            .many, .slice => false,
-        },
-        .optional => |opt_info| opt_info.child == Self or switch (@typeInfo(opt_info.child)) {
-            .pointer => |ptr_info| switch (ptr_info.size) {
-                .one => ptr_info.child == Self,
-                .c => false, // optional `C` pointers don't count
-                .many, .slice => false,
-            },
-        },
-        .error_union => |eu_info| return eu_info.payload == Self,
-        else => return false,
-    };
-    switch (ptr_info.size) {
-        .c, .one => {},
-        .many, .slice => return false,
-    }
-    return ptr_info.child == Self;
-}
-
-pub const PointerOptions = struct {
-    allow_optional: bool = false,
-};
-
-pub fn isThinPtrEx(comptime T: type, comptime options: PointerOptions) bool {
-    return switch (@typeInfo(T)) {
-        .pointer => |ptr_info| ptr_info.size != .Slice,
-        .optional => |opt_info| options.allow_optional and switch (@typeInfo(opt_info.child)) {
-            .pointer => |ptr_info| !ptr_info.is_allowzero and switch (ptr_info.size) {
-                .one, .many => true,
-                .c, .slice => false,
-            },
-            else => false,
-        },
-        else => false,
-    };
-}
-
-pub fn PtrChild(comptime T: type) type {
-    return getPtrChild(T) catch @compileError(
-        "Expected pointer or optional pointer type, found '" ++ @typeName(T) ++ "'",
-    );
-}
-
-pub fn getPtrChild(comptime T: type) error{NonPointerType}!type {
-    return switch (@typeInfo(T)) {
-        .pointer => |ptr_info| ptr_info.child,
-        .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
-            .pointer => |ptr_info| ptr_info.child,
-            else => return error.NonPointerType,
-        },
-        else => return error.NonPointerType,
-    };
 }

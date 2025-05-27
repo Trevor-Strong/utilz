@@ -106,6 +106,10 @@ pub fn Elem(comptime T: type) type {
     return getChildOrElem(T, .elem).?;
 }
 
+pub fn ElemPtr(comptime T: type) type {
+    return getElemSinglePtr(T).?;
+}
+
 fn getChildOrElem(comptime T: type, comptime mode: enum { child, elem }) ?type {
     const ptr_info = switch (@typeInfo(T)) {
         .pointer => |ptr_info| ptr_info,
@@ -122,6 +126,31 @@ fn getChildOrElem(comptime T: type, comptime mode: enum { child, elem }) ?type {
     };
 
     return ptr_info.child;
+}
+
+pub fn getElemSinglePtr(comptime T: type) ?type {
+    var ptr_info, const is_optional = switch (@typeInfo(T)) {
+        .pointer => |ptr_info| .{ ptr_info, false },
+        .optional => |opt_info| switch (@typeInfo(opt_info.child)) {
+            .pointer => |ptr_info| .{ ptr_info, true },
+            else => return null,
+        },
+        else => return null,
+    };
+    switch (ptr_info.size) {
+        .one => switch (@typeInfo(ptr_info.child)) {
+            .array => |array_info| {
+                ptr_info.child = array_info.child;
+            },
+            else => return null,
+        },
+        .c, .many, .slice => {
+            ptr_info.size = .one;
+            ptr_info.sentinel_ptr = null;
+        },
+    }
+    const Ptr = @Type(.{ .pointer = ptr_info });
+    return if (is_optional) ?Ptr else Ptr;
 }
 
 /// Wrapper around `@alignCast` that allows the alignment to be explicitly
@@ -494,13 +523,17 @@ pub inline fn asSlice(ptr: anytype) AsSlice(@TypeOf(ptr)) {
 }
 
 pub fn AsSlice(comptime T: type) type {
+    return tryAsSlice(T).?;
+}
+
+pub fn tryAsSlice(comptime T: type) ?type {
     var ptr_info, const is_optional = switch (@typeInfo(T)) {
         .pointer => |ptr_info| .{ ptr_info, false },
         .optional => |opt_info| switch (opt_info.child) {
             .pointer => |ptr_info| .{ ptr_info, true },
-            else => unreachable,
+            else => return null,
         },
-        else => unreachable,
+        else => return null,
     };
     switch (ptr_info.size) {
         .slice => return T,
@@ -512,9 +545,9 @@ pub fn AsSlice(comptime T: type) type {
                 const SliceType = @Type(.{ .pointer = ptr_info });
                 return if (is_optional) ?SliceType else SliceType;
             },
-            else => unreachable,
+            else => return null,
         },
-        else => unreachable,
+        else => return null,
     }
     comptime unreachable;
 }
